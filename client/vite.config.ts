@@ -8,8 +8,9 @@ export default defineConfig({
     port: 3000,
     proxy: {
       '/ws': {
-        target: 'ws://localhost:4000',
+        target: 'http://localhost:4000',
         ws: true,
+        changeOrigin: true,
       },
     },
   },

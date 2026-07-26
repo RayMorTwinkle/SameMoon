@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Button, Card, Title, Notification } from 'animal-island-ui';
-import { useWebSocket } from '../../hooks/useWebSocket';
+import { useWebSocket, useWsMessage } from '../../hooks/useWebSocket';
 import { Link, UserPlus } from 'lucide-react';
 
 type PeerStatus = 'waiting' | 'joined';
@@ -12,6 +12,7 @@ export function RoomPage() {
   const [peerStatus, setPeerStatus] = useState<PeerStatus>('waiting');
   const [role, setRole] = useState<'host' | 'guest' | null>(null);
   const [copied, setCopied] = useState(false);
+  const { status, send } = useWebSocket();
 
   const handleMessage = useCallback((msg: Record<string, unknown>) => {
     const data = msg.data as Record<string, unknown>;
@@ -52,7 +53,7 @@ export function RoomPage() {
     }
   }, [navigate]);
 
-  const { status, send } = useWebSocket({ onMessage: handleMessage });
+  useWsMessage(handleMessage);
 
   // 通过 URL 进入时自动加入房间（非房主）
   useEffect(() => {
@@ -106,7 +107,6 @@ export function RoomPage() {
       {/* 用户状态 */}
       <Card color="app-blue" className="mt-4 max-w-sm w-full">
         <div className="flex justify-center gap-8">
-          {/* 自己 */}
           <div className="flex flex-col items-center gap-2">
             <div className="w-12 h-12 rounded-full border-2 border-green-400 bg-green-50 flex items-center justify-center">
               <span className="text-green-600 text-sm font-bold">
@@ -116,7 +116,6 @@ export function RoomPage() {
             <span className="text-xs text-green-700">已就绪</span>
           </div>
 
-          {/* 对方 */}
           <div className="flex flex-col items-center gap-2">
             <div
               className={`w-12 h-12 rounded-full border-2 flex items-center justify-center ${

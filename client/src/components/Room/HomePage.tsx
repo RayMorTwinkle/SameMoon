@@ -1,13 +1,12 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Card, Title, Input, Notification } from 'animal-island-ui';
-import { useWebSocket } from '../hooks/useWebSocket';
+import { useWebSocket, useWsMessage } from '../../hooks/useWebSocket';
 
 export function HomePage() {
   const navigate = useNavigate();
   const [roomCode, setRoomCode] = useState('');
-  const [joining, setJoining] = useState(false);
-  const pendingAction = useRef<'create' | 'join' | null>(null);
+  const { status, send } = useWebSocket();
 
   const handleMessage = useCallback((msg: Record<string, unknown>) => {
     const data = msg.data as Record<string, unknown>;
@@ -21,7 +20,6 @@ export function HomePage() {
     }
 
     if (msg.type === 'error') {
-      setJoining(false);
       Notification.error({
         message: '操作失败',
         description: (data.message as string) || '请稍后重试',
@@ -29,18 +27,15 @@ export function HomePage() {
     }
   }, [navigate]);
 
-  const { status, send } = useWebSocket({ onMessage: handleMessage });
+  useWsMessage(handleMessage);
 
   const handleCreate = () => {
     if (status !== 'connected') return;
-    pendingAction.current = 'create';
     send({ type: 'room:create', data: {} });
   };
 
   const handleJoin = () => {
     if (status !== 'connected' || roomCode.length !== 4) return;
-    setJoining(true);
-    pendingAction.current = 'join';
     send({ type: 'room:join', data: { roomCode } });
   };
 
@@ -76,7 +71,7 @@ export function HomePage() {
             </div>
             <Button
               type="default"
-              disabled={!connected || roomCode.length !== 4 || joining}
+              disabled={!connected || roomCode.length !== 4}
               onClick={handleJoin}
             >
               加入
