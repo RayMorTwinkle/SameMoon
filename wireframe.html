@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Same Moon - 界面草图</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, sans-serif; background: #1a1a2e; color: #333; }
+
+/* 导航切换 */
+.nav { position: fixed; top: 0; left: 0; right: 0; background: #16213e; padding: 12px 20px; display: flex; gap: 8px; z-index: 100; flex-wrap: wrap; align-items: center; }
+.nav-title { color: #fff; font-size: 14px; font-weight: bold; margin-right: 16px; }
+.nav button { padding: 6px 14px; border: 1px solid #4a5568; background: #2d3748; color: #e2e8f0; border-radius: 4px; cursor: pointer; font-size: 13px; }
+.nav button.active { background: #4299e1; border-color: #4299e1; color: #fff; }
+.nav .device-toggle { margin-left: auto; display: flex; gap: 4px; }
+.nav .device-toggle button { border-radius: 4px 0 0 4px; }
+.nav .device-toggle button:last-child { border-radius: 0 4px 4px 0; }
+
+/* 页面容器 */
+.page { display: none; padding: 80px 20px 40px; max-width: 1200px; margin: 0 auto; }
+.page.active { display: block; }
+.page-title { color: #fff; font-size: 13px; margin-bottom: 12px; opacity: 0.7; }
+
+/* 线框基础样式 */
+.wireframe { background: #fff; border-radius: 12px; padding: 40px; min-height: 600px; position: relative; border: 2px dashed #cbd5e0; }
+.wireframe.mobile { max-width: 375px; margin: 0 auto; min-height: 700px; padding: 20px; border-radius: 24px; }
+
+/* 通用线框元素 */
+.box { border: 2px solid #a0aec0; border-radius: 8px; padding: 16px; margin: 8px 0; background: #f7fafc; position: relative; }
+.box-label { position: absolute; top: -10px; left: 12px; background: #fff; padding: 0 6px; font-size: 11px; color: #718096; }
+.btn-wire { display: inline-block; padding: 10px 24px; border: 2px solid #4299e1; border-radius: 20px; color: #4299e1; font-size: 14px; margin: 4px; text-align: center; }
+.btn-wire.primary { background: #4299e1; color: #fff; }
+.btn-wire.disabled { border-color: #cbd5e0; color: #cbd5e0; }
+.input-wire { border: 2px solid #a0aec0; border-radius: 8px; padding: 12px 16px; width: 100%; margin: 8px 0; background: #fff; color: #718096; font-size: 14px; }
+.divider { border-top: 1px dashed #cbd5e0; margin: 20px 0; }
+.note { font-size: 12px; color: #e53e3e; margin-top: 8px; padding: 6px 10px; background: #fff5f5; border-radius: 4px; border-left: 3px solid #e53e3e; }
+.hint { font-size: 12px; color: #718096; margin-top: 4px; }
+.center { text-align: center; }
+.mt { margin-top: 20px; }
+.mb { margin-bottom: 20px; }
+
+/* 页面1: 首页 */
+.logo-area { text-align: center; padding: 60px 0 30px; }
+.logo-circle { width: 80px; height: 80px; border-radius: 50%; border: 3px solid #a0aec0; margin: 0 auto 16px; display: flex; align-items: center; justify-content: center; font-size: 32px; color: #a0aec0; }
+.app-name { font-size: 28px; color: #2d3748; font-weight: bold; }
+.app-slogan { font-size: 14px; color: #718096; margin-top: 8px; }
+
+/* 页面2: 等待室 */
+.room-code { font-size: 48px; font-weight: bold; letter-spacing: 12px; text-align: center; color: #2d3748; padding: 20px; }
+.link-box { background: #edf2f7; border-radius: 8px; padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; margin: 12px 0; }
+.link-text { font-size: 13px; color: #4a5568; overflow: hidden; text-overflow: ellipsis; }
+.users-row { display: flex; gap: 16px; justify-content: center; margin: 20px 0; }
+.user-avatar { width: 60px; height: 60px; border-radius: 50%; border: 2px solid #a0aec0; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #718096; }
+.user-avatar.joined { border-color: #48bb78; background: #f0fff4; }
+.user-avatar.waiting { border-style: dashed; }
+
+/* 页面3: 文件选择 */
+.drop-zone { border: 3px dashed #a0aec0; border-radius: 12px; padding: 60px 20px; text-align: center; margin: 20px 0; }
+.drop-icon { font-size: 48px; color: #a0aec0; margin-bottom: 12px; }
+.file-info { display: flex; align-items: center; gap: 12px; padding: 16px; background: #f0fff4; border: 2px solid #48bb78; border-radius: 8px; margin: 12px 0; }
+.file-icon { width: 40px; height: 40px; border: 2px solid #48bb78; border-radius: 8px; display: flex; align-items: center; justify-content: center; }
+.match-status { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-radius: 6px; font-size: 13px; margin: 4px 0; }
+.match-ok { background: #f0fff4; color: #276749; }
+.match-fail { background: #fff5f5; color: #c53030; }
+
+/* 页面4: 播放器 */
+.player-layout { display: grid; grid-template-columns: 1fr 300px; gap: 16px; height: 520px; }
+.player-layout.mobile-layout { grid-template-columns: 1fr; height: auto; }
+.video-area { background: #1a202c; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: #4a5568; font-size: 14px; position: relative; min-height: 300px; }
+.video-area .play-icon { width: 60px; height: 60px; border: 3px solid #4a5568; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+.progress-bar { height: 6px; background: #e2e8f0; border-radius: 3px; margin: 12px 0; position: relative; }
+.progress-fill { height: 100%; width: 35%; background: #4299e1; border-radius: 3px; }
+.progress-dot { width: 14px; height: 14px; background: #4299e1; border-radius: 50%; position: absolute; top: -4px; left: 35%; }
+.controls-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; }
+.ctrl-btn { width: 36px; height: 36px; border: 2px solid #a0aec0; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #718096; }
+.ctrl-btn.main { width: 44px; height: 44px; border-color: #4299e1; color: #4299e1; }
+.time-label { font-size: 12px; color: #718096; }
+.sidebar { display: flex; flex-direction: column; gap: 12px; }
+.chat-area { flex: 1; border: 2px solid #a0aec0; border-radius: 8px; padding: 12px; display: flex; flex-direction: column; }
+.chat-messages { flex: 1; overflow: hidden; }
+.chat-msg { margin: 8px 0; font-size: 13px; }
+.chat-msg .name { color: #4299e1; font-weight: bold; }
+.chat-input-row { display: flex; gap: 8px; margin-top: 8px; }
+.chat-input { flex: 1; border: 2px solid #a0aec0; border-radius: 16px; padding: 8px 12px; font-size: 13px; }
+.status-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #f7fafc; border-radius: 8px; font-size: 12px; color: #718096; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; background: #48bb78; }
+.status-dot.warn { background: #ecc94b; }
+.voice-btn { padding: 8px 16px; border: 2px dashed #cbd5e0; border-radius: 20px; color: #a0aec0; font-size: 12px; text-align: center; }
+
+/* 页面5: 错误状态 */
+.error-modal { border: 2px solid #e53e3e; border-radius: 12px; padding: 24px; max-width: 400px; margin: 40px auto; text-align: center; }
+.error-icon { width: 48px; height: 48px; border-radius: 50%; border: 2px solid #e53e3e; margin: 0 auto 12px; display: flex; align-items: center; justify-content: center; color: #e53e3e; font-size: 20px; }
+.toast { position: absolute; top: 20px; right: 20px; background: #fff; border: 2px solid #ecc94b; border-radius: 8px; padding: 12px 16px; font-size: 13px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); max-width: 280px; }
+
+/* 注释标签 */
+.annotation { position: absolute; background: #fefcbf; border: 1px solid #ecc94b; padding: 4px 8px; font-size: 11px; border-radius: 4px; color: #744210; }
+</style>
+</head>
+<body>
+
+<div class="nav">
+  <span class="nav-title">Same Moon 界面草图</span>
+  <button class="active" onclick="showPage('p1')">① 首页</button>
+  <button onclick="showPage('p2')">② 等待室</button>
+  <button onclick="showPage('p3')">③ 选择文件</button>
+  <button onclick="showPage('p4')">④ 播放器(桌面)</button>
+  <button onclick="showPage('p5')">⑤ 播放器(手机)</button>
+  <button onclick="showPage('p6')">⑥ 错误状态</button>
+</div>
+
+<!-- 页面1: 首页 -->
+<div class="page active" id="p1">
+  <p class="page-title">首页 — 用户打开网站第一眼看到的</p>
+  <div class="wireframe">
+    <div class="logo-area">
+      <div class="logo-circle">☽</div>
+      <div class="app-name">Same Moon</div>
+      <div class="app-slogan">千里共婵娟 · 异地同步观影</div>
+    </div>
+    <div class="center mt">
+      <div class="btn-wire primary" style="font-size:16px; padding: 14px 40px;">创建房间</div>
+    </div>
+    <div class="center mt">
+      <div style="display:inline-flex; align-items:center; gap:8px;">
+        <input class="input-wire" style="width:200px;" placeholder="输入房间号">
+        <div class="btn-wire">加入房间</div>
+      </div>
+    </div>
+    <div class="divider"></div>
+    <div class="center hint">
+      无需注册 · 无需安装 · 打开即用<br>
+      支持手机 / 平板 / 电脑
+    </div>
+    <div class="note" style="max-width:400px; margin:20px auto 0;">
+      说明：主操作是"创建房间"（最大按钮），次操作是"加入房间"（输入房间号）。也可以直接通过别人分享的链接进入，此时跳过此页。
+    </div>
+  </div>
+</div>
+
+<!-- 页面2: 等待室 -->
+<div class="page" id="p2">
+  <p class="page-title">等待室 — 创建房间后，等待对方加入</p>
+  <div class="wireframe">
+    <div class="center">
+      <div style="font-size:14px; color:#718096; margin-bottom:8px;">房间号</div>
+      <div class="room-code">3 8 4 7</div>
+    </div>
+    <div class="link-box">
+      <span class="link-text">https://samemoon.app/r/3847</span>
+      <div class="btn-wire" style="padding:6px 16px; font-size:12px;">复制链接</div>
+    </div>
+    <div class="hint center">把链接发给 TA，TA 打开即可加入</div>
+
+    <div class="divider"></div>
+
+    <div class="users-row">
+      <div style="text-align:center;">
+        <div class="user-avatar joined">✓</div>
+        <div style="font-size:12px; margin-top:6px; color:#276749;">你（房主）</div>
+      </div>
+      <div style="text-align:center;">
+        <div class="user-avatar waiting">?</div>
+        <div style="font-size:12px; margin-top:6px; color:#a0aec0;">等待加入…</div>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="box">
+      <span class="box-label">下一步</span>
+      <div style="font-size:14px; color:#4a5568;">等对方加入后，双方各自选择同一部电影文件</div>
+      <div class="btn-wire disabled mt" style="width:100%;">选择电影文件（等待对方加入）</div>
+    </div>
+
+    <div class="note">
+      说明：对方加入后，"选择电影文件"按钮激活。双方都选完且验证通过后，自动跳转到播放器页面。
+    </div>
+  </div>
+</div>
+
+<!-- 页面3: 文件选择 -->
+<div class="page" id="p3">
+  <p class="page-title">文件选择 — 双方各自选择本地电影</p>
+  <div class="wireframe">
+    <div style="font-size:16px; font-weight:bold; margin-bottom:4px;">选择电影文件</div>
+    <div class="hint mb">文件不会上传，仅在你的设备上播放</div>
+
+    <div class="drop-zone">
+      <div class="drop-icon">📁</div>
+      <div style="font-size:14px; color:#4a5568;">点击选择 或 拖拽文件到此处</div>
+      <div class="hint mt">支持 .mp4 / .webm / .mkv（Chrome）/ .mov（Safari）</div>
+    </div>
+
+    <div class="divider"></div>
+    <div style="font-size:13px; font-weight:bold; margin-bottom:8px; color:#4a5568;">— 选择后显示 —</div>
+
+    <div class="file-info">
+      <div class="file-icon">▶</div>
+      <div>
+        <div style="font-size:14px; font-weight:bold;">星际穿越.2014.1080p.BluRay.mkv</div>
+        <div style="font-size:12px; color:#718096;">4.2 GB</div>
+      </div>
+      <div style="margin-left:auto; color:#48bb78; font-size:20px;">✓</div>
+    </div>
+
+    <div style="margin:16px 0;">
+      <div style="font-size:13px; font-weight:bold; margin-bottom:8px;">文件匹配状态：</div>
+      <div class="match-status match-ok">✓ 文件名一致</div>
+      <div class="match-status match-ok">✓ 文件大小一致（4,523,891,712 字节）</div>
+      <div class="match-status" style="background:#fffbeb; color:#92400e;">⏳ 等待对方选择文件…</div>
+    </div>
+
+    <div class="btn-wire primary mt" style="width:100%; text-align:center;">等待双方验证通过…</div>
+
+    <div class="note">
+      说明：如果文件名或大小不一致，显示红色 ✗ 并提示"请确认是同一版本"。双方都验证通过后按钮变为"进入播放"并自动跳转。
+    </div>
+  </div>
+</div>
+
+<!-- 页面4: 播放器(桌面) -->
+<div class="page" id="p4">
+  <p class="page-title">播放器（桌面端）— 核心使用页面</p>
+  <div class="wireframe" style="padding:20px;">
+    <div class="player-layout">
+      <!-- 左侧：播放器 -->
+      <div>
+        <div class="video-area">
+          <div class="play-icon">▶</div>
+          <div class="annotation" style="top:8px; left:8px;">视频画面区域</div>
+        </div>
+        <!-- 进度条 -->
+        <div style="padding: 0 4px;">
+          <div class="progress-bar">
+            <div class="progress-fill"></div>
+            <div class="progress-dot"></div>
+          </div>
+          <div style="display:flex; justify-content:space-between;">
+            <span class="time-label">0:58:32</span>
+            <span class="time-label">2:49:00</span>
+          </div>
+        </div>
+        <!-- 控制按钮 -->
+        <div class="controls-row" style="justify-content:center;">
+          <div class="ctrl-btn">⏮</div>
+          <div class="ctrl-btn">-10s</div>
+          <div class="ctrl-btn main">⏸</div>
+          <div class="ctrl-btn">+10s</div>
+          <div class="ctrl-btn">⏭</div>
+          <div style="width:20px;"></div>
+          <div class="ctrl-btn" style="border-radius:8px; width:auto; padding:0 12px; font-size:11px;">1.0x</div>
+          <div class="ctrl-btn" style="border-radius:8px; width:auto; padding:0 12px; font-size:11px;">字幕</div>
+          <div class="ctrl-btn" style="border-radius:8px; width:auto; padding:0 12px; font-size:11px;">全屏</div>
+        </div>
+        <!-- 同步状态 -->
+        <div class="status-bar">
+          <div class="status-dot"></div>
+          <span>已同步</span>
+          <span style="margin-left:auto;">偏差: 0.3s</span>
+          <span>|</span>
+          <span>P2P 直连</span>
+        </div>
+      </div>
+
+      <!-- 右侧：侧边栏 -->
+      <div class="sidebar">
+        <!-- 对方状态 -->
+        <div class="box" style="margin:0;">
+          <span class="box-label">TA 的状态</span>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <div class="user-avatar joined" style="width:32px;height:32px;font-size:10px;">B</div>
+            <div>
+              <div style="font-size:13px; font-weight:bold;">对方在线</div>
+              <div style="font-size:11px; color:#718096;">正在播放 · 进度同步</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 语音按钮（预留） -->
+        <div class="voice-btn">🎙 语音通话（即将上线）</div>
+
+        <!-- 聊天区 -->
+        <div class="chat-area">
+          <div style="font-size:12px; font-weight:bold; margin-bottom:8px; color:#718096;">聊天</div>
+          <div class="chat-messages">
+            <div class="chat-msg"><span class="name">你：</span>准备好了吗</div>
+            <div class="chat-msg"><span class="name" style="color:#48bb78;">TA：</span>好了好了 开始吧！</div>
+            <div class="chat-msg"><span class="name">你：</span>3 2 1 走！</div>
+          </div>
+          <div class="chat-input-row">
+            <input class="chat-input" placeholder="说点什么…">
+            <div class="btn-wire" style="padding:6px 12px; font-size:12px;">发送</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 页面5: 播放器(手机) -->
+<div class="page" id="p5">
+  <p class="page-title">播放器（手机端）— 响应式布局</p>
+  <div class="wireframe mobile">
+    <!-- 顶部状态 -->
+    <div class="status-bar" style="margin-bottom:12px;">
+      <div class="status-dot"></div>
+      <span style="font-size:11px;">已同步 · P2P</span>
+      <span style="margin-left:auto; font-size:11px;">偏差 0.3s</span>
+    </div>
+
+    <!-- 视频区 -->
+    <div class="video-area" style="min-height:200px; border-radius:8px;">
+      <div class="play-icon" style="width:44px;height:44px;">▶</div>
+    </div>
+
+    <!-- 进度条 -->
+    <div class="progress-bar" style="margin:10px 0;">
+      <div class="progress-fill"></div>
+      <div class="progress-dot"></div>
+    </div>
+    <div style="display:flex; justify-content:space-between;">
+      <span class="time-label">0:58:32</span>
+      <span class="time-label">2:49:00</span>
+    </div>
+
+    <!-- 控制按钮 -->
+    <div class="controls-row" style="justify-content:center; margin:8px 0;">
+      <div class="ctrl-btn">-10s</div>
+      <div class="ctrl-btn main">⏸</div>
+      <div class="ctrl-btn">+10s</div>
+      <div class="ctrl-btn" style="border-radius:8px; width:auto; padding:0 10px; font-size:10px;">1.0x</div>
+      <div class="ctrl-btn" style="border-radius:8px; width:auto; padding:0 10px; font-size:10px;">全屏</div>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- 对方状态（紧凑） -->
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
+      <div class="status-dot"></div>
+      <span style="font-size:12px;">TA 在线 · 正在播放</span>
+      <div class="voice-btn" style="margin-left:auto; padding:4px 10px;">🎙 即将上线</div>
+    </div>
+
+    <!-- 聊天区 -->
+    <div class="chat-area" style="min-height:180px;">
+      <div style="font-size:12px; font-weight:bold; margin-bottom:8px; color:#718096;">聊天</div>
+      <div class="chat-messages">
+        <div class="chat-msg"><span class="name">你：</span>准备好了吗</div>
+        <div class="chat-msg"><span class="name" style="color:#48bb78;">TA：</span>好了好了！</div>
+      </div>
+      <div class="chat-input-row">
+        <input class="chat-input" placeholder="说点什么…">
+        <div class="btn-wire" style="padding:6px 12px; font-size:12px;">↑</div>
+      </div>
+    </div>
+
+    <div class="note" style="margin-top:12px;">
+      手机端：视频在上，聊天在下（纵向堆叠）。全屏播放时聊天隐藏。
+    </div>
+  </div>
+</div>
+
+<!-- 页面6: 错误状态 -->
+<div class="page" id="p6">
+  <p class="page-title">错误/异常状态示例</p>
+  <div class="wireframe">
+    <div style="font-size:14px; font-weight:bold; margin-bottom:20px;">各种异常状态的 UI 表现：</div>
+
+    <!-- 不可恢复错误：Modal -->
+    <div class="error-modal">
+      <div class="error-icon">✕</div>
+      <div style="font-size:16px; font-weight:bold; margin-bottom:8px;">直连失败</div>
+      <div style="font-size:13px; color:#718096; margin-bottom:16px;">
+        当前网络环境不支持 P2P 直连。<br>
+        请检查路由器是否开启 IPv6，或切换网络后重试。
+      </div>
+      <div class="btn-wire primary" style="font-size:13px;">重试连接</div>
+      <div class="btn-wire" style="font-size:13px;">返回首页</div>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- 可恢复提示：Toast -->
+    <div style="position:relative; height:80px; border:1px dashed #cbd5e0; border-radius:8px;">
+      <div class="toast">
+        <div style="font-weight:bold; margin-bottom:4px;">⚠ 连接中断</div>
+        <div>正在重新连接…（第 2 次）</div>
+      </div>
+      <div style="padding:20px; font-size:12px; color:#a0aec0;">← Toast 通知（自动消失，不打断操作）</div>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- 文件不匹配 -->
+    <div class="box" style="border-color:#e53e3e;">
+      <span class="box-label" style="color:#e53e3e;">文件不匹配</span>
+      <div class="match-status match-fail">✕ 文件大小不一致：你的 4.2GB ≠ TA 的 4.1GB</div>
+      <div style="font-size:13px; color:#718096; margin-top:8px;">
+        请双方确认使用完全相同的文件（同一来源、同一版本）。
+      </div>
+      <div class="btn-wire" style="margin-top:12px; font-size:13px;">重新选择文件</div>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- 对方掉线 -->
+    <div class="box" style="border-color:#ecc94b;">
+      <span class="box-label" style="color:#d69e2e;">对方掉线</span>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <div class="status-dot warn"></div>
+        <span style="font-size:13px;">对方已断开连接，等待重新加入…</span>
+      </div>
+      <div style="font-size:12px; color:#718096; margin-top:8px;">30 秒后未重连将自动关闭房间</div>
+      <div class="progress-bar" style="margin-top:8px;">
+        <div class="progress-fill" style="width:60%; background:#ecc94b;"></div>
+      </div>
+    </div>
+
+    <div class="note">
+      错误分级原则：<br>
+      · 可恢复（重连中、轻微偏差）→ Toast 提示，不打断<br>
+      · 需用户操作（文件不匹配）→ 内联提示 + 操作按钮<br>
+      · 不可恢复（连接彻底失败）→ Modal 阻断 + 明确出路
+    </div>
+  </div>
+</div>
+
+<script>
+function showPage(id) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  event.target.classList.add('active');
+}
+</script>
+</body>
+</html>
