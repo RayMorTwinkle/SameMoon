@@ -50,7 +50,16 @@ export async function buildApp(): Promise<FastifyInstance> {
             }));
             break;
           }
-          const room = roomManager.createRoom(userId, socket);
+          let room;
+          try {
+            room = roomManager.createRoom(userId, socket);
+          } catch {
+            socket.send(JSON.stringify({
+              type: 'error',
+              data: { code: 'SERVER_FULL', message: '服务器房间已满，请稍后再试' },
+            }));
+            break;
+          }
           currentRoom = room.code;
           socket.send(JSON.stringify({
             type: 'room:created',

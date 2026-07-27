@@ -102,10 +102,15 @@ export class SyncEngine {
         break;
       }
       case 'sync:state': {
-        // 全量状态追齐（§1.7）
-        const state = data as unknown as PlaybackState;
-        this.seq = Math.max(this.seq, state.seq);
-        this.applyRemote(state);
+        // 区分请求/响应（Fix R2/R3）：无 seq = 请求，有 seq = 响应
+        if (data.seq === undefined || data.seq === null) {
+          // 对方请求我的状态 → 回复
+          this.sendState();
+        } else {
+          const state = data as unknown as PlaybackState;
+          this.seq = Math.max(this.seq, state.seq);
+          this.applyRemote(state);
+        }
         break;
       }
       case 'sync:buffering': {
@@ -123,10 +128,7 @@ export class SyncEngine {
         break;
       }
       case 'sync:heartbeat': {
-        // 时钟采样（§1.2）
-        const d = data as { clientTime: number; serverTime?: number };
-        // 对方回包时携带 serverTime = 对方收到时的时间
-        // 这里简化：由调用方在收到回包时调 clock.addSample
+        this.handleHeartbeat(data);
         break;
       }
     }
@@ -145,11 +147,16 @@ export class SyncEngine {
     });
   }
 
-  /** 发送心跳（携带时钟采样数据） */
+  /** 发送心跳（携带时钟采样 + 当前播放状态，Fix B2+B3） */
   sendHeartbeat(): void {
     this.transport.send({
       type: 'sync:heartbeat',
-      data: { clientTime: Date.now() },
+      data: {
+        clientTime: Date.now(),  // t0
+        time: this.adapter.getTime(),
+        paused: this.adapter.getPaused(),
+        rate: this.adapter.getRate(),
+      },
     });
   }
 
@@ -232,12 +239,50 @@ export class SyncEngine {
 
   /** §1.4 漂移校正（三档） */
   private checkDrift(): void {
-    if (this.adapter.getPaused()) return; // 暂停时不校正
-
-    // 发送心跳同时携带当前时间，由对方回复后计算漂移
-    // 简化实现：直接用最近一次远端 state 的 sentAt 推算
-    // 完整实现需要对方回复当前 time，这里通过 heartbeat 交换
+    if (this.adapter.getPaused()) return;
     this.sendHeartbeat();
+  }
+
+  /**
+   * 心跳双向握手处理（Fix B2+B3）
+   * 收到无 echoOf 的心跳 = 请求：回复 + 用对方状态做漂移校正
+   * 收到有 echoOf 的心跳 = 响应：计算时钟偏移 + 用对方状态做漂移校正
+   */
+  private handleHeartbeat(data: Record<string, unknown>): void {
+    const remoteTime = data.time as number | undefined;
+    const remotePaused = data.paused as boolean | undefined;
+
+    if (data.echoOf === undefined) {
+      // 这是请求：记录 t1，回复带 echo
+      const t1 = Date.now();
+      const t0 = data.clientTime as number;
+      this.transport.send({
+        type: 'sync:heartbeat',
+        data: {
+          echoOf: t0,          // 回显对方 t0
+          t1,                  // 我收到时刻
+          clientTime: Date.now(), // t2（我发送时刻）
+          time: this.adapter.getTime(),
+          paused: this.adapter.getPaused(),
+          rate: this.adapter.getRate(),
+        },
+      });
+      // 用对方携带的状态做漂移校正
+      if (remoteTime !== undefined && remotePaused !== undefined) {
+        this.applyDriftCorrection(remoteTime, remotePaused, t0);
+      }
+    } else {
+      // 这是响应：计算时钟偏移
+      const t0 = data.echoOf as number;
+      const t1 = data.t1 as number;
+      const t2 = data.clientTime as number;
+      const t3 = Date.now();
+      this.clock.addSample(t0, t1, t2, t3);
+      // 用对方状态做漂移校正
+      if (remoteTime !== undefined && remotePaused !== undefined) {
+        this.applyDriftCorrection(remoteTime, remotePaused, t2);
+      }
+    }
   }
 
   /**

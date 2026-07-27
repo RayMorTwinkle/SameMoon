@@ -17,8 +17,13 @@ export interface Room {
 export class RoomManager {
   private rooms = new Map<string, Room>();
 
+  private static readonly MAX_ROOMS = 5000;
+
   /** 生成 4 位数字房间号 */
   generateCode(): string {
+    if (this.rooms.size >= RoomManager.MAX_ROOMS) {
+      throw new Error('SERVER_FULL');
+    }
     let code: string;
     do {
       code = String(Math.floor(1000 + Math.random() * 9000));

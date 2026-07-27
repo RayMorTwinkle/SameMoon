@@ -50,36 +50,17 @@ export function PlayerPage() {
 
   // 处理远端消息
   const handleMessage = useCallback((msg: Record<string, unknown>) => {
-    const data = msg.data as Record<string, unknown>;
-
-    // sync:* 消息交给引擎处理
+    // sync:* 消息全部交给引擎处理（心跳双向握手已在引擎内部完成）
     if ((msg.type as string).startsWith('sync:')) {
       engineRef.current?.handleRemoteMessage(msg);
-
-      // 心跳回复 → 时钟采样 + 漂移校正
-      if (msg.type === 'sync:heartbeat' && data.clientTime) {
-        const t3 = Date.now();
-        const remoteTime = data.clientTime as number;
-        // 简化采样：用 remoteTime 作为 t1≈t2
-        clockRef.current.addSample(t3 - 100, remoteTime, remoteTime, t3);
-
-        // 漂移校正（如果引擎在运行且对方携带了播放时间）
-        if (data.time !== undefined) {
-          engineRef.current?.applyDriftCorrection(
-            data.time as number,
-            (data.paused as boolean) ?? false,
-            remoteTime,
-          );
-        }
-      }
       return;
     }
-
-    // 对方点击"准备好了"
+  
+    // 对方点击“准备好了”
     if (msg.type === 'player:ready') {
       setPeerReady(true);
     }
-
+  
     if (msg.type === 'room:left') {
       Notification.warning({ message: '对方已离开', description: '同步已暂停' });
       engineRef.current?.stop();

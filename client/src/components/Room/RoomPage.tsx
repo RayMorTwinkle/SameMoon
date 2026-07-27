@@ -90,11 +90,19 @@ export function RoomPage() {
 
   useWsMessage(handleMessage);
 
-  // 仅当直接通过 URL 进入（无路由 state 角色）时才自动 join；只发一次
+  // 仅当直接通过 URL 进入（无路由 state 角色）时才自动 join
+  // Fix R12: 重连后 status 重新变为 connected 时允许重新 join
+  const prevStatusRef = useRef(status);
   useEffect(() => {
-    if (status === 'connected' && code && !role && !joinSentRef.current) {
-      joinSentRef.current = true;
-      send({ type: 'room:join', data: { roomCode: code } });
+    const wasDisconnected = prevStatusRef.current !== 'connected';
+    prevStatusRef.current = status;
+
+    if (status === 'connected' && code && !role) {
+      // 首次进入或重连后都重新 join（服务端幂等，不会重复加入）
+      if (!joinSentRef.current || wasDisconnected) {
+        joinSentRef.current = true;
+        send({ type: 'room:join', data: { roomCode: code } });
+      }
     }
   }, [status, code, role, send]);
 
