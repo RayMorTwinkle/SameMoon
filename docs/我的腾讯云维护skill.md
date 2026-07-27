@@ -80,3 +80,77 @@ GitHub backup 分支 或 本地电脑
 - 2G 内存有限，避免在服务器上构建（build），用 GitHub Actions 或本地构建后推镜像
 - 腾讯云控制台“防火墙”需开放服务端口（默认只开了 22）
 - 服务器是试用性质，重要数据必须备份到 GitHub 或本地
+
+## SameMoon 部署与更新
+
+### 首次部署（新服务器）
+
+```bash
+# 1. 克隆配置仓库
+ssh SM
+git clone https://github.com/RayMorTwinkle/ServerX.git ~/app-configs
+
+# 2. 本地构建前端（在本地机器执行，不在服务器 build）
+exit
+cd /path/to/SameMoon/client && npm run build
+
+# 3. 上传前端构建产物到服务器
+scp -r dist/* SM:~/app-configs/same-moon/client/dist/
+
+# 4. 服务器启动
+ssh SM
+cd ~/app-configs/same-moon
+bash setup.sh
+
+# 5. 验证
+curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/  # 应返回 200
+```
+
+> ⚠️ 首次启动会自动下载 Docker 镜像（node:alpine + nginx:alpine）和 npm install，耗时约 1-2 分钟。
+
+### 后续更新（代码迭代后）
+
+**只改前端代码时**（最常见）：
+
+```bash
+# 本地构建
+cd /path/to/SameMoon/client && npm run build
+
+# 上传 + 重启前端容器
+scp -r dist/* SM:~/app-configs/same-moon/client/dist/
+ssh SM "sudo docker compose -f ~/app-configs/same-moon/docker-compose.yml restart sm-client"
+```
+
+**后端代码也改了时**：
+
+```bash
+# 1. 更新后端源码到服务器
+cd ~/app-configs/same-moon
+cp -r /path/to/SameMoon/server ./
+
+# 2. 全量重建 + 重启
+sudo docker compose up -d --build
+```
+
+**配置仓库（ServerX）更新时**：
+
+```bash
+cd ~/app-configs && git pull
+cd same-moon && sudo docker compose up -d --build
+```
+
+### 常用运维命令
+
+```bash
+# 查看日志
+sudo docker compose -f ~/app-configs/same-moon/docker-compose.yml logs -f
+
+# 查看容器状态
+sudo docker compose -f ~/app-configs/same-moon/docker-compose.yml ps
+
+# 停止服务
+sudo docker compose -f ~/app-configs/same-moon/docker-compose.yml down
+
+# 重启服务
+sudo docker compose -f ~/app-configs/same-moon/docker-compose.yml restart
+```
