@@ -12,11 +12,14 @@ export function HomePage() {
     const data = msg.data as Record<string, unknown>;
 
     if (msg.type === 'room:created') {
-      navigate(`/room/${data.roomCode}`);
+      // 通过路由 state 传递角色，RoomPage 据此跳过自动 join
+      navigate(`/room/${data.roomCode}`, { state: { role: 'host' } });
     }
 
     if (msg.type === 'room:joined') {
-      navigate(`/room/${msg.room}`);
+      navigate(`/room/${msg.room}`, {
+        state: { role: data.role ?? 'guest', peerCount: data.peerCount ?? 1 },
+      });
     }
 
     if (msg.type === 'error') {

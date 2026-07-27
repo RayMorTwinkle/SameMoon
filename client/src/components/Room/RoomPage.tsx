@@ -1,30 +1,39 @@
-import { useCallback, useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Button, Card, Title, Notification } from 'animal-island-ui';
 import { useWebSocket, useWsMessage } from '../../hooks/useWebSocket';
 import { Link, UserPlus } from 'lucide-react';
 
 type PeerStatus = 'waiting' | 'joined';
 
+interface RoomNavState {
+  role?: 'host' | 'guest';
+  peerCount?: number;
+}
+
 export function RoomPage() {
   const { code } = useParams<{ code: string }>();
   const navigate = useNavigate();
-  const [peerStatus, setPeerStatus] = useState<PeerStatus>('waiting');
-  const [role, setRole] = useState<'host' | 'guest' | null>(null);
+  const location = useLocation();
+  // 从路由 state 读取角色（HomePage 导航时传入）；直接打开 URL 时为 null
+  const navState = (location.state as RoomNavState | null) ?? null;
+
+  const [role, setRole] = useState<'host' | 'guest' | null>(navState?.role ?? null);
+  const [peerStatus, setPeerStatus] = useState<PeerStatus>(
+    (navState?.peerCount ?? 0) > 0 ? 'joined' : 'waiting'
+  );
   const [copied, setCopied] = useState(false);
+  const joinSentRef = useRef(false);
   const { status, send } = useWebSocket();
 
   const handleMessage = useCallback((msg: Record<string, unknown>) => {
     const data = msg.data as Record<string, unknown>;
 
     switch (msg.type) {
-      case 'room:created':
-        setRole('host');
-        break;
-
       case 'room:joined':
-        setRole('guest');
-        setPeerStatus('joined');
+        // 服务端返回真实角色和当前房间人数
+        setRole((data.role as 'host' | 'guest') ?? 'guest');
+        setPeerStatus(((data.peerCount as number) ?? 0) > 0 ? 'joined' : 'waiting');
         break;
 
       case 'room:peer-joined':
@@ -55,9 +64,10 @@ export function RoomPage() {
 
   useWsMessage(handleMessage);
 
-  // 通过 URL 进入时自动加入房间（非房主）
+  // 仅当直接通过 URL 进入（无路由 state 角色）时才自动 join；只发一次
   useEffect(() => {
-    if (status === 'connected' && code && !role) {
+    if (status === 'connected' && code && !role && !joinSentRef.current) {
+      joinSentRef.current = true;
       send({ type: 'room:join', data: { roomCode: code } });
     }
   }, [status, code, role, send]);

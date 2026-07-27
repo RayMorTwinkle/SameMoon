@@ -45,6 +45,12 @@ export class RoomManager {
   joinRoom(code: string, userId: string, ws: WebSocket): Room | null {
     const room = this.rooms.get(code);
     if (!room) return null;
+    // 幂等：已在房间内的用户重复 join，直接返回房间（不改变角色/人数）
+    if (room.users.has(userId)) {
+      // 更新 ws 引用（可能是新连接）
+      room.users.get(userId)!.ws = ws;
+      return room;
+    }
     if (room.users.size >= 2) return null;
 
     room.users.set(userId, { id: userId, ws, role: 'guest' });
