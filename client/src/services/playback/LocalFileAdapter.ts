@@ -26,7 +26,7 @@ export class LocalFileAdapter implements PlaybackAdapter {
     this.objectUrl = URL.createObjectURL(source.file);
 
     this.art = new Artplayer({
-      container: this.container,
+      container: this.container as string | HTMLDivElement,
       url: this.objectUrl,
       autoplay: false,
       autoSize: false,
@@ -77,7 +77,7 @@ export class LocalFileAdapter implements PlaybackAdapter {
   }
 
   getPaused(): boolean {
-    return this.art?.paused ?? true;
+    return (this.art as unknown as { paused: boolean } | null)?.paused ?? true;
   }
 
   getRate(): number {

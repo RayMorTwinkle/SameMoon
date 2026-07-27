@@ -162,7 +162,7 @@ export function RoomPage() {
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-6">
-      <Title size="medium" color="app-green">
+      <Title size="large" color="app-green">
         等待室
       </Title>
 

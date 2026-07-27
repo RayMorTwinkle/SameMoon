@@ -6,7 +6,7 @@ import { getSharedFile } from '../../services/room/fileStore';
 import { LocalFileAdapter } from '../../services/playback/LocalFileAdapter';
 import { ClockSync } from '../../services/sync/ClockSync';
 import { SyncEngine } from '../../services/sync/SyncEngine';
-import { Play, Pause, Wifi, WifiOff } from 'lucide-react';
+import { Play, Wifi, WifiOff } from 'lucide-react';
 
 type Phase = 'loading' | 'ready-prompt' | 'syncing';
 
@@ -17,7 +17,7 @@ export function PlayerPage() {
 
   const [phase, setPhase] = useState<Phase>('loading');
   const [peerReady, setPeerReady] = useState(false);
-  const [syncStatus, setSyncStatus] = useState<'synced' | 'drifting' | 'buffering'>('synced');
+  const [syncStatus] = useState<'synced' | 'drifting' | 'buffering'>('synced');
 
   const containerRef = useRef<HTMLDivElement>(null);
   const adapterRef = useRef<LocalFileAdapter | null>(null);

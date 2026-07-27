@@ -69,7 +69,7 @@ export function HomePage() {
                 placeholder="输入4位房间号"
                 value={roomCode}
                 maxLength={4}
-                onChange={(v: string) => setRoomCode(v.replace(/\D/g, ''))}
+                onChange={(e) => setRoomCode((e.target as HTMLInputElement).value.replace(/\D/g, ''))}
               />
             </div>
             <Button
