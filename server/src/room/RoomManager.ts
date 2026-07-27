@@ -1,4 +1,5 @@
 import type { WebSocket } from 'ws';
+import type { RoomMode } from '../ws/protocol.js';
 
 export interface RoomUser {
   id: string;
@@ -12,6 +13,8 @@ export interface Room {
   users: Map<string, RoomUser>;
   createdAt: number;
   state: 'waiting' | 'selecting' | 'playing' | 'reconnecting' | 'closed';
+  mode: RoomMode;
+  screenSharer: string | null; // 当前正在分享屏幕的用户 ID（null = 无人分享）
 }
 
 export interface RoomManagerOptions {
@@ -45,13 +48,15 @@ export class RoomManager {
     return code;
   }
 
-  createRoom(hostId: string, ws: WebSocket): Room {
+  createRoom(hostId: string, ws: WebSocket, mode: RoomMode = 'local-sync'): Room {
     const code = this.generateCode();
     const room: Room = {
       code,
       users: new Map([[hostId, { id: hostId, ws, role: 'host' }]]),
       createdAt: Date.now(),
       state: 'waiting',
+      mode,
+      screenSharer: null,
     };
     this.rooms.set(code, room);
     return room;
@@ -115,6 +120,10 @@ export class RoomManager {
     if (!room) return;
     room.users.delete(userId);
     this.clearDisconnectTimer(userId);
+    // 如果被移除的是当前屏幕分享者，清除标记
+    if (room.screenSharer === userId) {
+      room.screenSharer = null;
+    }
     if (room.users.size === 0) {
       this.destroyRoom(code);
     }
@@ -169,6 +178,9 @@ export class RoomManager {
     if (!room) return;
 
     room.users.delete(userId);
+    if (room.screenSharer === userId) {
+      room.screenSharer = null;
+    }
     if (room.users.size === 0) {
       this.destroyRoom(code);
     }

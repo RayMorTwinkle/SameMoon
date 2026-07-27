@@ -27,11 +27,23 @@ interface WsContextValue {
 
 const WsContext = createContext<WsContextValue | null>(null);
 
+/** 生成 UUID（兼容非 HTTPS 环境，crypto.randomUUID 仅在安全上下文可用） */
+function generateUUID(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 /** 获取或创建 sessionId（sessionStorage，刷新不丢） */
 function getSessionId(): string {
   const existing = sessionStorage.getItem('sm-session');
   if (existing) return existing;
-  const sid = crypto.randomUUID();
+  const sid = generateUUID();
   sessionStorage.setItem('sm-session', sid);
   return sid;
 }
@@ -47,6 +59,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   const disposedRef = useRef(false);
   const listenersRef = useRef<Set<(msg: Record<string, unknown>) => void>>(new Set());
   const sessionIdRef = useRef<string>(getSessionId());
+  const pingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const subscribe = useCallback((handler: (msg: Record<string, unknown>) => void) => {
     listenersRef.current.add(handler);
@@ -66,11 +79,17 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
 
     ws.onopen = () => {
       if (disposedRef.current) { ws.close(); return; }
-      // TECH-SPEC §3.2: 连接后立即发送 session:hello（不在此设 status，等服务器确认）
       ws.send(JSON.stringify({
         type: 'session:hello',
         data: { sessionId: sessionIdRef.current },
       }));
+      // 每 30s 发空包保活（防止 TCP idle 断开）
+      if (pingTimerRef.current) clearInterval(pingTimerRef.current);
+      pingTimerRef.current = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'ping' }));
+        }
+      }, 30000);
     };
 
     ws.onmessage = (event) => {
@@ -109,17 +128,19 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
 
     ws.onclose = () => {
       if (disposedRef.current) return;
+      if (pingTimerRef.current) { clearInterval(pingTimerRef.current); pingTimerRef.current = null; }
       wsRef.current = null;
       setStatus('disconnected');
 
-      if (retriesRef.current < 5) {
-        const delay = Math.min(1000 * 2 ** retriesRef.current, 10000);
-        retriesRef.current += 1;
-        setReconnectCount(retriesRef.current);
-        setTimeout(() => {
-          if (!disposedRef.current) connect();
-        }, delay);
-      }
+      // 无限重试：前几次快速重试，之后 30s 间隔（适应浏览器后台休眠）
+      const delay = retriesRef.current < 5
+        ? Math.min(1000 * 2 ** retriesRef.current, 10000)
+        : 30000;
+      retriesRef.current += 1;
+      setReconnectCount(retriesRef.current);
+      setTimeout(() => {
+        if (!disposedRef.current) connect();
+      }, delay);
     };
 
     ws.onerror = () => { ws.close(); };
@@ -128,8 +149,21 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     disposedRef.current = false;
     connect();
+
+    // 浏览器切回前台时主动重连（解决后台休眠导致的断开）
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && (!wsRef.current || wsRef.current.readyState > 1)) {
+        retriesRef.current = 0;
+        setReconnectCount(0);
+        connect();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+
     return () => {
       disposedRef.current = true;
+      document.removeEventListener('visibilitychange', onVisible);
+      if (pingTimerRef.current) { clearInterval(pingTimerRef.current); pingTimerRef.current = null; }
       if (wsRef.current) {
         wsRef.current.onclose = null;
         wsRef.current.close();

@@ -226,4 +226,141 @@ describe('信令服务器集成测试（完整用户流程 + session 重连）',
     expect((err.data as { code: string }).code).toBe('INVALID_SIZE');
     c.close();
   });
+
+  // ─── Stage 2: 模式系统 ─────────────────────────────
+  it('Stage 2：room:created 携带默认 mode=local-sync', async () => {
+    const a = new TestClient(port, 'user-mode-a');
+    await a.open();
+    a.send({ type: 'room:create', data: {} });
+    const created = await a.waitFor('room:created');
+    expect((created.data as { mode: string }).mode).toBe('local-sync');
+    a.close();
+  });
+
+  it('Stage 2：创建 file-transfer 模式房间', async () => {
+    const a = new TestClient(port, 'user-mode-ft');
+    await a.open();
+    a.send({ type: 'room:create', data: { mode: 'file-transfer' } });
+    const created = await a.waitFor('room:created');
+    expect((created.data as { mode: string }).mode).toBe('file-transfer');
+
+    // Guest 加入也要带 mode
+    const b = new TestClient(port, 'user-mode-ft-b');
+    await b.open();
+    const code = (created.data as { roomCode: string }).roomCode;
+    b.send({ type: 'room:join', data: { roomCode: code } });
+    const joined = await b.waitFor('room:joined');
+    expect((joined.data as { mode: string }).mode).toBe('file-transfer');
+    a.close();
+    b.close();
+  });
+
+  it('Stage 2：无效模式被拒绝', async () => {
+    const a = new TestClient(port, 'user-badmode');
+    await a.open();
+    a.send({ type: 'room:create', data: { mode: 'invalid-mode' } });
+    const err = await a.waitFor('error');
+    expect((err.data as { code: string }).code).toBe('INVALID_MODE');
+    a.close();
+  });
+
+  // ─── Stage 2: 屏幕分享协调 ─────────────────────────
+  it('Stage 2：screen:request → grant，同一时刻只有一个分享者', async () => {
+    const a = new TestClient(port, 'user-scr-a');
+    await a.open();
+    a.send({ type: 'room:create', data: { mode: 'screen-share' } });
+    const created = await a.waitFor('room:created');
+    const code = (created.data as { roomCode: string }).roomCode;
+
+    const b = new TestClient(port, 'user-scr-b');
+    await b.open();
+    b.send({ type: 'room:join', data: { roomCode: code } });
+    await b.waitFor('room:joined');
+
+    // A 请求分享 → grant
+    a.send({ type: 'screen:request', data: {} });
+    const grantA = await a.waitFor('screen:grant');
+    expect(grantA.type).toBe('screen:grant');
+
+    // B 也请求 → busy
+    b.send({ type: 'screen:request', data: {} });
+    const busyB = await b.waitFor('screen:busy');
+    expect((busyB.data as { sharer: string }).sharer).toBe(a.userId);
+
+    // A 停止分享
+    a.send({ type: 'screen:stop', data: {} });
+    await b.waitFor('screen:stop');
+
+    // 现在 B 可以请求成功
+    b.send({ type: 'screen:request', data: {} });
+    const grantB = await b.waitFor('screen:grant');
+    expect(grantB.type).toBe('screen:grant');
+
+    a.close();
+    b.close();
+  });
+
+  // ─── Stage 2: RTC 信令转发 ─────────────────────────
+  it('Stage 2：rtc:offer/answer/ice 在房间内转发', async () => {
+    const a = new TestClient(port, 'user-rtc-a');
+    await a.open();
+    a.send({ type: 'room:create', data: { mode: 'screen-share' } });
+    const created = await a.waitFor('room:created');
+    const code = (created.data as { roomCode: string }).roomCode;
+
+    const b = new TestClient(port, 'user-rtc-b');
+    await b.open();
+    b.send({ type: 'room:join', data: { roomCode: code } });
+    await b.waitFor('room:joined');
+
+    // A → offer → B
+    a.send({ type: 'rtc:offer', data: { sdp: 'v=0...' } });
+    const offer = await b.waitFor('rtc:offer');
+    expect((offer.data as { sdp: string }).sdp).toBe('v=0...');
+    expect(offer.from).toBe(a.userId);
+
+    // B → answer → A
+    b.send({ type: 'rtc:answer', data: { sdp: 'v=0...answer' } });
+    const answer = await a.waitFor('rtc:answer');
+    expect((answer.data as { sdp: string }).sdp).toBe('v=0...answer');
+
+    // ICE candidates 转发
+    a.send({ type: 'rtc:ice', data: { candidate: 'candidate:1...' } });
+    const ice = await b.waitFor('rtc:ice');
+    expect((ice.data as { candidate: string }).candidate).toBe('candidate:1...');
+
+    a.close();
+    b.close();
+  });
+
+  // ─── Stage 2: 文件传输消息转发 ─────────────────────
+  it('Stage 2：file:offer/progress/complete 在房间内转发', async () => {
+    const a = new TestClient(port, 'user-ft-a');
+    await a.open();
+    a.send({ type: 'room:create', data: { mode: 'file-transfer' } });
+    const created = await a.waitFor('room:created');
+    const code = (created.data as { roomCode: string }).roomCode;
+
+    const b = new TestClient(port, 'user-ft-b');
+    await b.open();
+    b.send({ type: 'room:join', data: { roomCode: code } });
+    await b.waitFor('room:joined');
+
+    // Host 发送 file:offer
+    a.send({ type: 'file:offer', data: { name: 'movie.mp4', size: 5000000, type: 'video/mp4' } });
+    const offer = await b.waitFor('file:offer');
+    expect((offer.data as { name: string }).name).toBe('movie.mp4');
+
+    // Host 发送 file:progress
+    a.send({ type: 'file:progress', data: { transferred: 1000000, total: 5000000 } });
+    const progress = await b.waitFor('file:progress');
+    expect((progress.data as { transferred: number }).transferred).toBe(1000000);
+
+    // Host 发送 file:complete
+    a.send({ type: 'file:complete', data: {} });
+    await b.waitFor('file:complete');
+
+    a.close();
+    b.close();
+  });
 });

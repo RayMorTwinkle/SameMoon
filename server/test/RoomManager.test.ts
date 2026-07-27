@@ -164,4 +164,33 @@ describe('RoomManager', () => {
     rm.markOffline(room.code, 'user-b');
     expect(rm.getPeerOnline(room.code, 'user-a')).toBe(false);
   });
+
+  // ─── Stage 2: mode 和 screenSharer ─────────────────
+  it('默认模式为 local-sync', () => {
+    const room = rm.createRoom('user-a', fakeWs());
+    expect(room.mode).toBe('local-sync');
+    expect(room.screenSharer).toBeNull();
+  });
+
+  it('可指定其他模式创建房间', () => {
+    const roomFile = rm.createRoom('user-a', fakeWs(), 'file-transfer');
+    expect(roomFile.mode).toBe('file-transfer');
+
+    const roomScreen = rm.createRoom('user-b', fakeWs(), 'screen-share');
+    expect(roomScreen.mode).toBe('screen-share');
+  });
+
+  it('forceRemove 清除 screenSharer（若被移除者是分享者）', () => {
+    const room = rm.createRoom('user-a', fakeWs(), 'screen-share');
+    room.screenSharer = 'user-a';
+    rm.forceRemove(room.code, 'user-a');
+    expect(room.screenSharer).toBeNull();
+  });
+
+  it('leaveRoom 清除 screenSharer', () => {
+    const room = rm.createRoom('user-a', fakeWs(), 'screen-share');
+    room.screenSharer = 'user-a';
+    rm.leaveRoom(room.code, 'user-a');
+    expect(room.screenSharer).toBeNull();
+  });
 });

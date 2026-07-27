@@ -5,14 +5,26 @@ import { useWebSocket, useWsMessage } from '../../hooks/useWebSocket';
 import { isValidVideoFile, FORMAT_HINT } from '../../utils/fileValidator';
 import { formatFileSize } from '../../utils/formatFileSize';
 import { setSharedFile } from '../../services/room/fileStore';
-import { Link, UserPlus, FileVideo, CheckCircle, XCircle, Clock, Home, ArrowLeft, RefreshCw } from 'lucide-react';
+import { debugStore } from '../../services/debugStore';
+import { Link, UserPlus, FileVideo, CheckCircle, XCircle, Clock, Home, ArrowLeft, RefreshCw, Monitor, Upload, StopCircle } from 'lucide-react';
+import { ScreenShareService, type ScreenShareState } from '../../services/webrtc/ScreenShare';
+import { screenShareStore } from '../../services/webrtc/screenShareStore';
+import type { SignalingAdapter } from '../../services/webrtc/PeerConnectionManager';
 
 type PeerStatus = 'waiting' | 'joined';
 type FileMatchStatus = 'idle' | 'sent' | 'matched' | 'mismatched';
+type RoomMode = 'local-sync' | 'file-transfer' | 'screen-share';
+
+const MODE_LABELS: Record<RoomMode, string> = {
+  'local-sync': '本地同步',
+  'file-transfer': '文件传输',
+  'screen-share': '屏幕分享',
+};
 
 interface RoomNavState {
   role?: 'host' | 'guest';
   peerCount?: number;
+  mode?: RoomMode;
 }
 
 export function RoomPage() {
@@ -22,6 +34,7 @@ export function RoomPage() {
   const navState = (location.state as RoomNavState | null) ?? null;
 
   const [role, setRole] = useState<'host' | 'guest' | null>(navState?.role ?? null);
+  const [roomMode, setRoomMode] = useState<RoomMode>(navState?.mode ?? 'local-sync');
   const [peerStatus, setPeerStatus] = useState<PeerStatus>(
     (navState?.peerCount ?? 0) > 0 ? 'joined' : 'waiting'
   );
@@ -37,6 +50,13 @@ export function RoomPage() {
   const [roomClosed, setRoomClosed] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // ─── 屏幕分享状态 ─────────────────────────────────────
+  const [screenShareState, setScreenShareState] = useState<ScreenShareState>('idle');
+  const [screenShareBusy, setScreenShareBusy] = useState(false);
+  const screenRef = useRef<ScreenShareService | null>(null);
+  // ICE 缓冲：PCM 未就绪时暂存到达的 ICE 候选
+  const iceBufferRef = useRef<Array<{ candidate: string; sdpMid?: string; sdpMLineIndex?: number }>>([]);
+
   // 重连带出上次文件名（用于提示用户）
   const [restoreFileName, setRestoreFileName] = useState<string | null>(null);
   const [restoreFileSize, setRestoreFileSize] = useState<number | null>(null);
@@ -48,10 +68,15 @@ export function RoomPage() {
       case 'room:joined':
         setRole((data.role as 'host' | 'guest') ?? 'guest');
         setPeerStatus(((data.peerCount as number) ?? 0) > 0 ? 'joined' : 'waiting');
+        if (data.mode) {
+          setRoomMode(data.mode as RoomMode);
+          debugStore.setRoomInfo(data.mode as string, code ?? null);
+        }
         break;
 
       case 'room:peer-joined':
         setPeerStatus('joined');
+        debugStore.setPeerOnline(true);
         // 对方重连 → 文件已失效，重置匹配状态
         setMatchStatus('idle');
         setSelectedFile(null);
@@ -94,6 +119,52 @@ export function RoomPage() {
         break;
       }
 
+      case 'screen:grant':
+        // 获权分享或对方开始分享
+        setScreenShareBusy(false);
+        break;
+
+      case 'screen:busy':
+        setScreenShareBusy(true);
+        Notification.warning({ message: '屏幕分享被占用', description: `对方 (${data.sharer}) 正在分享中` });
+        break;
+
+      case 'screen:stop':
+        screenRef.current?.stop();
+        setScreenShareState('idle');
+        setScreenShareBusy(false);
+        break;
+
+      case 'rtc:offer': {
+        console.log('[SS-B] 收到 rtc:offer, roomMode =', roomMode, 'isSharer =', screenShareStore.isSharer());
+        if (roomMode === 'screen-share' && !screenShareStore.isSharer()) {
+          const sdp = (data as { sdp: string }).sdp;
+          console.log('[SS-B] SDP 长度:', sdp?.length, '字节');
+          handleIncomingShare(sdp);
+        }
+        break;
+      }
+
+      case 'rtc:answer': {
+        const sdp = (data as { sdp: string }).sdp;
+        console.log('[SS-A] 收到 rtc:answer, SDP 长度:', sdp?.length);
+        screenShareStore.state.pcm?.receiveAnswer(sdp);
+        break;
+      }
+
+      case 'rtc:ice': {
+        const ice = data as { candidate: string; sdpMid?: string; sdpMLineIndex?: number };
+        const pcm = screenShareStore.state.pcm;
+        if (pcm) {
+          pcm.receiveIce(ice.candidate, ice.sdpMid, ice.sdpMLineIndex);
+        } else {
+          console.log('[RTCP] ICE 缓冲 (PCM 未就绪), buffer 大小:', iceBufferRef.current.length + 1,
+                      'isSharer:', screenShareStore.isSharer(), 'isViewer:', screenShareStore.isViewer());
+          iceBufferRef.current.push(ice);
+        }
+        break;
+      }
+
       case 'error':
         Notification.error({
           message: '出错了',
@@ -117,6 +188,10 @@ export function RoomPage() {
       restoredActiveRef.current = true;
       setRole(restoredData.role);
       setPeerStatus(restoredData.peerOnline ? 'joined' : 'waiting');
+      const mode = (restoredData as { mode?: RoomMode }).mode ?? 'local-sync';
+      setRoomMode(mode);
+      debugStore.setRoomInfo(mode, code);
+      debugStore.setPeerOnline(restoredData.peerOnline);
       // 保存上次文件名用于提示（服务端已清除 fileInfo，需要重新选择）
       if (restoredData.fileName) {
         setRestoreFileName(restoredData.fileName);
@@ -156,10 +231,81 @@ export function RoomPage() {
     const url = `${window.location.origin}/room/${code}`;
     try {
       await navigator.clipboard.writeText(url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
     } catch {
-      Notification.error({ message: '复制失败', description: '请手动复制链接' });
+      // HTTP 环境降级：创建临时 textarea
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = url;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      } catch {
+        Notification.error({ message: '复制失败', description: '请手动复制链接' });
+        return;
+      }
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  // ─── 屏幕分享 ────────────────────────────────────────
+
+  const buildSignalingAdapter = (): SignalingAdapter => ({
+    sendRtcOffer: (data) => send({ type: 'rtc:offer', data }),
+    sendRtcAnswer: (data) => send({ type: 'rtc:answer', data }),
+    sendRtcIce: (data) => send({ type: 'rtc:ice', data }),
+  });
+
+  const handleShare = async () => {
+    console.log('[SS-A] handleShare 开始');
+    const svc = new ScreenShareService();
+    screenRef.current = svc;
+    svc.onStateChangeHandler(setScreenShareState);
+    send({ type: 'screen:request', data: {} });
+    console.log('[SS-A] screen:request 已发送');
+    const adapter = buildSignalingAdapter();
+    try {
+      await svc.startSharing(adapter);
+      console.log('[SS-A] startSharing 完成，PCM 已存入 store:', !!screenShareStore.state.pcm);
+    } catch (err) {
+      console.error('[SS-A] startSharing 失败:', err);
+      Notification.error({ message: '分享失败', description: '请检查浏览器权限设置' });
+      setScreenShareState('idle');
+      send({ type: 'screen:stop', data: {} });
+    }
+  };
+
+  const handleStopShare = () => {
+    screenRef.current?.stop();
+    setScreenShareState('idle');
+    send({ type: 'screen:stop', data: {} });
+  };
+
+  const handleIncomingShare = async (offerSdp: string) => {
+    console.log('[SS-B] handleIncomingShare 开始');
+    const svc = new ScreenShareService();
+    screenRef.current = svc;
+    svc.onStateChangeHandler(setScreenShareState);
+    const adapter = buildSignalingAdapter();
+    try {
+      await svc.startViewing(adapter, offerSdp);
+      console.log('[SS-B] startViewing 完成');
+      const pcm = screenShareStore.state.pcm;
+      if (pcm && iceBufferRef.current.length > 0) {
+        console.log('[SS-B] flush ICE buffer:', iceBufferRef.current.length, '条');
+        for (const ice of iceBufferRef.current) {
+          pcm.receiveIce(ice.candidate, ice.sdpMid, ice.sdpMLineIndex);
+        }
+        iceBufferRef.current = [];
+      }
+      navigate(`/room/${code}/play`, { state: { mode: 'screen-share' } });
+    } catch (err) {
+      console.error('[SS-B] startViewing 失败:', err);
+      Notification.error({ message: '连接失败', description: '无法建立 P2P 连接，请对方重新分享' });
+      setScreenShareState('idle');
     }
   };
 
@@ -235,6 +381,9 @@ export function RoomPage() {
       <Title size="large" color="app-green">
         等待室
       </Title>
+      <span className="mt-1 text-xs px-2 py-0.5 rounded-full bg-[#f0faf9] text-[#19c8b9] border border-[#19c8b9]/20">
+        {MODE_LABELS[roomMode]}
+      </span>
 
       {/* 房间号 + 链接 */}
       <Card color="app-yellow" className="mt-6 max-w-sm w-full">
@@ -290,8 +439,11 @@ export function RoomPage() {
         </div>
       </Card>
 
-      {/* 文件选择区 */}
+      {/* 操作区 — 按模式分支 */}
       <Card color="app-pink" className="mt-4 max-w-sm w-full">
+        {/* ── local-sync 模式：文件匹配（现有） ── */}
+        {roomMode === 'local-sync' && (
+          <>
         <input
           ref={fileInputRef}
           type="file"
@@ -375,10 +527,73 @@ export function RoomPage() {
             </div>
           </div>
         )}
+        </>
+        )}
+
+        {/* ── file-transfer 模式（Step 3 实现） ── */}
+        {roomMode === 'file-transfer' && (
+          <div className="text-center py-6">
+            <Upload size={32} className="mx-auto text-[#c4b89e] mb-2" />
+            <p className="text-sm text-[#725d42] mb-1">文件传输模式</p>
+            <p className="text-xs opacity-50">
+              {role === 'host' ? '房主将选择一个文件传给对方' : '等待房主发送文件'}
+            </p>
+            <p className="text-[10px] opacity-30 mt-2">Step 3 实现</p>
+          </div>
+        )}
+
+        {/* ── screen-share 模式 ── */}
+        {roomMode === 'screen-share' && (
+          <div className="text-center py-4 space-y-3">
+            <Monitor size={32} className="mx-auto text-[#c4b89e]" />
+            <p className="text-sm text-[#725d42]">屏幕分享模式</p>
+
+            {screenShareState === 'running' ? (
+              // 正在分享中
+              <>
+                <div className="flex items-center justify-center gap-2 text-xs">
+                  <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                  <span className="text-red-500">正在分享</span>
+                </div>
+                {screenShareStore.isSharer() && (
+                  <Button type="default" size="large" onClick={handleStopShare}
+                    icon={<StopCircle size={16} />}>
+                    停止分享
+                  </Button>
+                )}
+                {screenShareStore.isViewer() && (
+                  <Button type="primary" size="large"
+                    onClick={() => navigate(`/room/${code}/play`, { state: { mode: 'screen-share' } })}>
+                    观看屏幕
+                  </Button>
+                )}
+              </>
+            ) : screenShareState === 'requesting' ? (
+              <p className="text-xs opacity-50 animate-pulse">正在建立连接…</p>
+            ) : (
+              // 空闲：显示分享按钮
+              <>
+                <p className="text-xs opacity-50">
+                  {peerJoined
+                    ? '点击开始分享你的屏幕，对方将实时观看'
+                    : '等待对方加入后即可开始'}
+                </p>
+                {peerJoined && !screenShareBusy && (
+                  <Button type="primary" size="large" onClick={handleShare}>
+                    分享我的屏幕
+                  </Button>
+                )}
+                {screenShareBusy && (
+                  <p className="text-xs text-yellow-600">对方正在分享，请先等待结束</p>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </Card>
 
-      {/* 匹配成功后的下一步 */}
-      {matchStatus === 'matched' && (
+      {/* 匹配成功后的下一步（仅 local-sync） */}
+      {roomMode === 'local-sync' && matchStatus === 'matched' && (
         <div className="mt-4 max-w-sm w-full">
           <Button type="primary" size="large" block onClick={() => {
             if (selectedFile) {

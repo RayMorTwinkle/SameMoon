@@ -28,8 +28,8 @@ df -h                         # 磁盘
 
 # Docker 操作
 docker ps                     # 查看运行中的容器
-docker compose -f <path> up -d    # 启动服务
-docker compose -f <path> down     # 停止服务
+docker compose up -d          # 启动服务
+docker compose down           # 停止服务
 docker system prune -f        # 清理无用镜像/容器（释放磁盘）
 docker logs <容器名> --tail 50    # 查看日志
 
@@ -55,88 +55,80 @@ GitHub 仓库（权威源，不含 secrets）
 GitHub backup 分支 或 本地电脑
 ```
 
-- 部署/更新：`cd ~/app-configs/<项目> && git pull && docker compose up -d`
+- 部署/更新：`cd ~/app-configs/<项目> && bash setup.sh`
 - 备份：`tar -czf backup-$(date +%F).tar.gz ~/app-configs/`
 - `.env` 绝不进 GitHub，只在服务器上
+- 部署配置在 ServerX 仓库，源码在 SameMoon 仓库
+
+## SameMoon 架构
+
+```
+浏览器 :3000 → nginx (sm-client)
+                ├── /          → 静态文件 (client/dist)
+                ├── /ws        → proxy → sm-server:4000 (WebSocket)
+                ├── /api/*     → proxy → sm-server:4000
+                └── /health    → proxy → sm-server:4000
+```
 
 ## 当前已部署服务
 
 | 端口 | 项目 | 容器 | 配置目录 |
 |------|------|------|----------|
-| 3000 | SameMoon | sm-client / sm-server | `~/app-configs/same-moon/` |
-
-## 迁移流程（换新服务器时）
-
-1. 新服务器选 Ubuntu 24.04 + Docker 预装镜像
-2. 本地配置 SSH 免密（`ssh-copy-id`）
-3. 服务器上：`git clone` 部署仓库
-4. 手动补 `.env` 文件
-5. `docker compose up -d`
-6. 验证服务正常
-
-## 注意事项
-
-- 禁止在宿主机直接 `npm install` / `pip install`，一切走 Docker
-- 2G 内存有限，避免在服务器上构建（build），用 GitHub Actions 或本地构建后推镜像
-- 腾讯云控制台“防火墙”需开放服务端口（默认只开了 22）
-- 服务器是试用性质，重要数据必须备份到 GitHub 或本地
+| 3000 | SameMoon | sm-client (nginx) / sm-server (node) | `~/app-configs/same-moon/` |
 
 ## SameMoon 部署与更新
 
-### 首次部署（新服务器）
+### 首次部署
 
 ```bash
-# 1. 克隆配置仓库
+# 1. 服务器 clone ServerX 配置仓库
 ssh SM
 git clone https://github.com/RayMorTwinkle/ServerX.git ~/app-configs
+cp -r ~/app-configs/same-moon ~/app-configs/same-moon
 
-# 2. 本地构建前端（在本地机器执行，不在服务器 build）
+# 2. 创建 .env（TURN 凭据，不进 Git）
+cd ~/app-configs/same-moon
+cat > .env << 'EOF'
+TURN_KEY_ID=73ea334142af06b9d8f835e31d0fc1f4
+TURN_API_TOKEN=3674f6a26801b3b524aba83575662ce9673dc8a8f07b3267635021bd3c95e2df
+EOF
+
+# 3. 本地构建前端 + 上传（在本地机器执行）
 exit
 cd /path/to/SameMoon/client && npm run build
+rsync -avz dist/ SM:~/app-configs/same-moon/client/dist/
 
-# 3. 上传前端构建产物到服务器
-scp -r dist/* SM:~/app-configs/same-moon/client/dist/
-
-# 4. 服务器启动
+# 4. 启动服务（Docker 内构建服务端，不污染宿主机）
 ssh SM
 cd ~/app-configs/same-moon
 bash setup.sh
-
-# 5. 验证
-curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/  # 应返回 200
 ```
 
-> ⚠️ 首次启动会自动下载 Docker 镜像（node:alpine + nginx:alpine）和 npm install，耗时约 1-2 分钟。
-
-### 后续更新（代码迭代后）
-
-**只改前端代码时**（最常见）：
+### 后续更新（一键脚本）
 
 ```bash
-# 本地构建
-cd /path/to/SameMoon/client && npm run build
-
-# 上传 + 重启前端容器
-scp -r dist/* SM:~/app-configs/same-moon/client/dist/
-ssh SM "sudo docker compose -f ~/app-configs/same-moon/docker-compose.yml restart sm-client"
+cd /path/to/SameMoon
+bash docs/更新服务器SameMoon.sh
 ```
 
-**后端代码也改了时**：
+### 手动更新
 
 ```bash
-# 1. 更新后端源码到服务器
-cd ~/app-configs/same-moon
-cp -r /path/to/SameMoon/server ./
+# 1. 本地构建前端
+cd client && npm run build
 
-# 2. 全量重建 + 重启
-sudo docker compose up -d --build
-```
+# 2. 上传 dist
+rsync -avz dist/ SM:~/app-configs/same-moon/client/dist/
 
-**配置仓库（ServerX）更新时**：
+# 3. 更新后端源码（从 SameMoon 复制到 ServerX 本地，再上传）
+rsync -avz --delete --exclude='node_modules' --exclude='.env' \
+  server/src/ /path/to/ServerX/same-moon/server/src/
+cp server/package.json /path/to/ServerX/same-moon/server/
+rsync -avz --delete /path/to/ServerX/same-moon/ SM:~/app-configs/same-moon/
 
-```bash
-cd ~/app-configs && git pull
-cd same-moon && sudo docker compose up -d --build
+# 4. 重启
+ssh SM "cd ~/app-configs/same-moon && sudo docker compose up -d --build sm-server"
+ssh SM "cd ~/app-configs/same-moon && sudo docker compose restart sm-client"
 ```
 
 ### 常用运维命令
@@ -154,3 +146,20 @@ sudo docker compose -f ~/app-configs/same-moon/docker-compose.yml down
 # 重启服务
 sudo docker compose -f ~/app-configs/same-moon/docker-compose.yml restart
 ```
+
+## 迁移流程（换新服务器时）
+
+1. 新服务器选 Ubuntu 24.04 + Docker 预装镜像
+2. 本地配置 SSH 免密（`ssh-copy-id`）
+3. 服务器上：`git clone https://github.com/RayMorTwinkle/ServerX.git ~/app-configs`
+4. 手动补 `.env` 文件 + 上传前端 dist
+5. `bash setup.sh`
+6. 验证服务正常
+
+## 注意事项
+
+- **禁止在宿主机直接 `npm install` / `pip install`**，一切走 Docker
+- **Docker 内部构建（`docker compose build`）是允许的**，它不污染宿主机环境。服务端 TypeScript 编译量小（秒级），在 Docker 内执行无压力
+- 对于大型前端项目，前端 build 在本地执行后上传 dist（避免在 2G 服务器上跑 webpack/vite）
+- 腾讯云控制台「防火墙」需开放服务端口（默认只开了 22 和 3000）
+- 服务器是试用性质，重要数据必须备份到 GitHub 或本地

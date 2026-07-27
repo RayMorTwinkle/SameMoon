@@ -17,6 +17,7 @@ export type AdapterEvent =
 export type PlaybackSource =
   | { kind: 'local-file'; file: File }
   | { kind: 'direct-url'; url: string }
+  | { kind: 'webrtc-stream'; stream: MediaStream }
   | { kind: 'youtube'; videoId: string };
 
 export interface PlaybackAdapter {

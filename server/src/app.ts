@@ -1,9 +1,8 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import websocket from '@fastify/websocket';
 import cors from '@fastify/cors';
-import { randomUUID } from 'node:crypto';
 import { RoomManager } from './room/RoomManager.js';
-import type { WsMessage } from './ws/protocol.js';
+import type { WsMessage, RoomMode } from './ws/protocol.js';
 
 // ─── 安全加固常量（TECH-SPEC §6） ───────────────────────
 const MAX_MSG_SIZE = 4096;           // 单条消息 ≤4KB
@@ -14,14 +13,35 @@ const CHAT_MAX_LENGTH = 500;        // 聊天 ≤500 字符
 const JOIN_MAX_PER_MINUTE = 20;     // 每 IP 每分钟最多 20 次 join
 const ROOM_CODE_REGEX = /^\d{4}$/;  // 房间号必须是4位数字
 
-// 转发白名单（TECH-SPEC §6）
+// ─── Cloudflare TURN（Stage 2） ─────────────────────────
+const TURN_KEY_ID = process.env.TURN_KEY_ID;
+const TURN_API_TOKEN = process.env.TURN_API_TOKEN;
+const TURN_CREDENTIAL_TTL = 86_400;        // Cloudflare 凭据有效期 24h
+const TURN_CACHE_TTL = TURN_CREDENTIAL_TTL - 3_600; // 提前 1h 刷新缓存
+
+let cachedIceServers: { iceServers: unknown; } | null = null;
+let cacheExpiresAt = 0;
+
+// 转发白名单（TECH-SPEC §6 + Stage 2 扩展）
 const FORWARD_WHITELIST = new Set([
   'sync:play', 'sync:pause', 'sync:seek', 'sync:rate',
   'sync:heartbeat', 'sync:state', 'sync:buffering', 'sync:ready',
   'player:ready', 'chat:message',
-  // Phase 2+ 预留
+  // WebRTC 信令
   'rtc:offer', 'rtc:answer', 'rtc:ice',
+  // 文件传输协调
+  'file:offer', 'file:accept', 'file:progress', 'file:complete', 'file:cancelled',
+  // 屏幕分享协调
+  'screen:request', 'screen:grant', 'screen:busy', 'screen:stop',
+  // Phase 3+ 预留
   'source:set', 'browse:navigate',
+]);
+
+// 不需要 room 的消息类型（可在未加入房间时使用）
+const NO_ROOM_TYPES = new Set([
+  'rtc:offer', 'rtc:answer', 'rtc:ice',
+  'file:offer', 'file:accept', 'file:progress', 'file:complete', 'file:cancelled',
+  'ping',
 ]);
 
 /** 构建 Fastify 应用（导出以便测试） */
@@ -38,6 +58,53 @@ export async function buildApp(): Promise<FastifyInstance> {
   // 健康检查
   app.get('/health', async () => {
     return { status: 'ok', rooms: roomManager.activeRoomCount };
+  });
+
+  // ─── Cloudflare TURN 凭据端点（Stage 2） ─────────────
+  app.get('/api/ice-servers', async (_req, reply) => {
+    // 缓存命中
+    if (cachedIceServers && Date.now() < cacheExpiresAt) {
+      return cachedIceServers;
+    }
+
+    // 无凭据配置 → 仅返回公共 STUN
+    if (!TURN_KEY_ID || !TURN_API_TOKEN) {
+      const fallback = {
+        iceServers: [
+          { urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'] },
+        ],
+      };
+      cachedIceServers = fallback;
+      cacheExpiresAt = Date.now() + TURN_CACHE_TTL * 1000;
+      return fallback;
+    }
+
+    try {
+      const resp = await fetch(
+        `https://rtc.live.cloudflare.com/v1/turn/keys/${TURN_KEY_ID}/credentials/generate-ice-servers`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${TURN_API_TOKEN}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ ttl: TURN_CREDENTIAL_TTL }),
+        },
+      );
+      if (!resp.ok) {
+        app.log.error({ status: resp.status }, 'Cloudflare TURN API 失败');
+        reply.code(502);
+        return { error: 'TURN 服务暂不可用' };
+      }
+      const data = await resp.json();
+      cachedIceServers = data as { iceServers: unknown };
+      cacheExpiresAt = Date.now() + TURN_CACHE_TTL * 1000;
+      return data;
+    } catch (err) {
+      app.log.error(err, 'Cloudflare TURN 请求异常');
+      reply.code(502);
+      return { error: 'TURN 服务暂不可用' };
+    }
   });
 
   // 断线超时回调：真正移除用户并通知房间内其他人
@@ -65,7 +132,6 @@ export async function buildApp(): Promise<FastifyInstance> {
     const msgTimestamps: number[] = [];
     const checkRateLimit = (): boolean => {
       const now = Date.now();
-      // 清理窗口外的记录
       while (msgTimestamps.length > 0 && now - msgTimestamps[0] > RATE_WINDOW_MS) {
         msgTimestamps.shift();
       }
@@ -81,8 +147,15 @@ export async function buildApp(): Promise<FastifyInstance> {
     }, HELLO_TIMEOUT_MS);
 
     socket.on('message', (raw: Buffer) => {
-      // 消息大小校验（§6）
-      if (raw.byteLength > MAX_MSG_SIZE) {
+      // WebRTC SDP 消息豁免 4KB 限制（SDP offer/answer 可达 4-8KB）
+      const isRtcSignaling = (() => {
+        try {
+          const peek = JSON.parse(raw.toString());
+          return typeof peek?.type === 'string' && peek.type.startsWith('rtc:');
+        } catch { return false; }
+      })();
+
+      if (!isRtcSignaling && raw.byteLength > MAX_MSG_SIZE) {
         socket.send(JSON.stringify({
           type: 'error',
           data: { code: 'INVALID_SIZE', message: '消息大小超过 4KB 限制' },
@@ -90,7 +163,6 @@ export async function buildApp(): Promise<FastifyInstance> {
         return;
       }
 
-      // 频率限制（§6）
       if (!checkRateLimit()) {
         socket.close(1008, '消息频率过高');
         return;
@@ -107,7 +179,6 @@ export async function buildApp(): Promise<FastifyInstance> {
         return;
       }
 
-      // JSON 必须为 object，type 必须是 string（§6）
       if (typeof msg !== 'object' || msg === null || Array.isArray(msg)
           || typeof msg.type !== 'string') {
         socket.send(JSON.stringify({
@@ -117,7 +188,6 @@ export async function buildApp(): Promise<FastifyInstance> {
         return;
       }
 
-      // 未 hello 前只接受 session:hello（§6）
       if (!helloReceived && msg.type !== 'session:hello') {
         socket.send(JSON.stringify({
           type: 'error',
@@ -147,11 +217,8 @@ export async function buildApp(): Promise<FastifyInstance> {
             const { roomCode: code, room } = existingEntry;
             const user = room.users.get(sid)!;
 
-            // Fix: 重连后清除旧 fileInfo，因为 objectURL 已失效
-            // 保留副本用于通知客户端之前选了什么文件
             const prevFileInfo = user.fileInfo;
             user.fileInfo = undefined;
-            // 如果之前在 playing 状态，退回到 selecting（需要重新选文件验证）
             if (room.state === 'playing') {
               room.state = 'selecting';
             }
@@ -161,7 +228,6 @@ export async function buildApp(): Promise<FastifyInstance> {
               currentRoom = code;
               const peerOnline = roomManager.getPeerOnline(code, sid);
 
-              // 通知 peer: 断线用户重连，需要重新验证文件
               if (peerOnline) {
                 roomManager.broadcast(code, {
                   type: 'file:reset',
@@ -178,12 +244,12 @@ export async function buildApp(): Promise<FastifyInstance> {
                   role: user.role,
                   roomState: room.state,
                   peerOnline,
+                  mode: room.mode,
                   fileName: prevFileInfo?.name,
                   fileSize: prevFileInfo?.size,
                 },
               }));
 
-              // 通知房间内其他人
               roomManager.broadcast(code, {
                 type: 'room:peer-joined',
                 room: code,
@@ -203,7 +269,6 @@ export async function buildApp(): Promise<FastifyInstance> {
         }
 
         case 'room:create': {
-          // 防重：已在房间内则不允许再创建
           if (currentRoom) {
             socket.send(JSON.stringify({
               type: 'error',
@@ -211,9 +276,17 @@ export async function buildApp(): Promise<FastifyInstance> {
             }));
             break;
           }
+          const mode: RoomMode = (msg.data as { mode?: RoomMode } | undefined)?.mode ?? 'local-sync';
+          if (!['local-sync', 'file-transfer', 'screen-share'].includes(mode)) {
+            socket.send(JSON.stringify({
+              type: 'error',
+              data: { code: 'INVALID_MODE', message: '无效的房间模式' },
+            }));
+            break;
+          }
           let room;
           try {
-            room = roomManager.createRoom(sessionId!, socket);
+            room = roomManager.createRoom(sessionId!, socket, mode);
           } catch {
             socket.send(JSON.stringify({
               type: 'error',
@@ -225,7 +298,7 @@ export async function buildApp(): Promise<FastifyInstance> {
           socket.send(JSON.stringify({
             type: 'room:created',
             room: room.code,
-            data: { roomCode: room.code, role: 'host' },
+            data: { roomCode: room.code, role: 'host', mode: room.mode, peerCount: 0 },
           }));
           break;
         }
@@ -233,7 +306,6 @@ export async function buildApp(): Promise<FastifyInstance> {
         case 'room:join': {
           const code = (msg.data as { roomCode: string }).roomCode;
 
-          // roomCode 正则校验（§6）
           if (!ROOM_CODE_REGEX.test(code)) {
             socket.send(JSON.stringify({
               type: 'error',
@@ -245,7 +317,6 @@ export async function buildApp(): Promise<FastifyInstance> {
           const existing = roomManager.getRoom(code);
           const alreadyIn = existing?.users.has(sessionId!) ?? false;
 
-          // join 频率限制（§6）：基于 IP
           const ip = req.socket.remoteAddress ?? 'unknown';
           const now = Date.now();
           const counter = joinCounters.get(ip);
@@ -272,11 +343,9 @@ export async function buildApp(): Promise<FastifyInstance> {
           }
           currentRoom = code;
 
-          // 如果是重连（之前在此房间中），清除断线定时器
           roomManager.clearDisconnectTimer(sessionId!);
 
           const me = room.users.get(sessionId!)!;
-          // 回复加入者（幂等：重复 join 返回当前实际角色，不产生副作用）
           socket.send(JSON.stringify({
             type: 'room:joined',
             room: code,
@@ -284,11 +353,11 @@ export async function buildApp(): Promise<FastifyInstance> {
               userId: sessionId,
               role: me.role,
               peerCount: room.users.size - 1,
+              mode: room.mode,
               rejoin: alreadyIn,
             },
           }));
 
-          // 仅首次加入才广播给房间内其他人
           if (!alreadyIn) {
             roomManager.broadcast(code, {
               type: 'room:peer-joined',
@@ -309,7 +378,6 @@ export async function buildApp(): Promise<FastifyInstance> {
             user.fileInfo = msg.data as { name: string; size: number };
           }
 
-          // 双方文件都提交后进行验证
           const users = [...room.users.values()];
           if (users.length === 2 && users.every(u => u.fileInfo)) {
             const [a, b] = users;
@@ -333,9 +401,41 @@ export async function buildApp(): Promise<FastifyInstance> {
           break;
         }
 
-        // 同步/聊天消息：白名单校验后转发给对方（P2P 建立前由服务器中转）
+        // ─── 屏幕分享协调（Stage 2） ──────────────────
+        case 'screen:request': {
+          if (!currentRoom) break;
+          const room = roomManager.getRoom(currentRoom);
+          if (!room) break;
+          if (room.screenSharer && room.screenSharer !== sessionId) {
+            socket.send(JSON.stringify({
+              type: 'screen:busy',
+              data: { sharer: room.screenSharer },
+            }));
+            break;
+          }
+          room.screenSharer = sessionId!;
+          socket.send(JSON.stringify({ type: 'screen:grant', data: {} }));
+          // 不广播 grant（对方通过后续 rtc:offer/track 感知分享开始）
+          break;
+        }
+
+        case 'screen:stop': {
+          if (!currentRoom) break;
+          const room = roomManager.getRoom(currentRoom);
+          if (!room) break;
+          if (room.screenSharer === sessionId) {
+            room.screenSharer = null;
+          }
+          roomManager.broadcast(currentRoom, {
+            type: 'screen:stop',
+            room: currentRoom,
+            data: {},
+          }, sessionId!);
+          break;
+        }
+
+        // 同步/聊天/信令消息：白名单校验后转发
         default: {
-          // 聊天长度限制（§6）
           if (msg.type === 'chat:message') {
             const text = (msg.data as { text?: string } | undefined)?.text;
             if (typeof text === 'string' && text.length > CHAT_MAX_LENGTH) {
@@ -343,13 +443,15 @@ export async function buildApp(): Promise<FastifyInstance> {
             }
           }
 
-          // 白名单校验（§6）
           if (FORWARD_WHITELIST.has(msg.type)) {
-            if (!currentRoom) break;
-            roomManager.broadcast(currentRoom, {
+            if (!currentRoom && !NO_ROOM_TYPES.has(msg.type)) break;
+            if (msg.type.startsWith('rtc:')) {
+              console.log(`[SVR] 转发 ${msg.type}, room=${currentRoom}, from=${sessionId}, size=${raw.byteLength}B`);
+            }
+            roomManager.broadcast(currentRoom!, {
               ...msg,
               from: sessionId,
-              room: currentRoom,
+              room: currentRoom ?? undefined,
             }, sessionId!);
           } else {
             socket.send(JSON.stringify({
@@ -365,7 +467,6 @@ export async function buildApp(): Promise<FastifyInstance> {
     socket.on('close', () => {
       clearTimeout(helloTimeout);
       if (currentRoom && sessionId) {
-        // 标记离线并启动断线倒计时
         roomManager.markOffline(currentRoom, sessionId);
         roomManager.broadcast(currentRoom, {
           type: 'room:left',

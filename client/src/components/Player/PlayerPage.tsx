@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Button, Card, Notification } from 'animal-island-ui';
 import { useWebSocket, useWsMessage } from '../../hooks/useWebSocket';
 import { getSharedFile } from '../../services/room/fileStore';
 import { LocalFileAdapter } from '../../services/playback/LocalFileAdapter';
+import { WebrtcStreamAdapter } from '../../services/playback/WebrtcStreamAdapter';
 import { ClockSync } from '../../services/sync/ClockSync';
 import { SyncEngine, type SyncEngineEvent } from '../../services/sync/SyncEngine';
-import { Play, Wifi, WifiOff, Gauge } from 'lucide-react';
+import { screenShareStore } from '../../services/webrtc/screenShareStore';
+import { Play, Wifi, WifiOff, Gauge, Monitor } from 'lucide-react';
 
-type Phase = 'loading' | 'ready-prompt' | 'syncing' | 'missing-file';
+type Phase = 'loading' | 'ready-prompt' | 'syncing' | 'missing-file' | 'viewing';
 type SyncStatus = 'synced' | 'drifting' | 'buffering';
 
 const SPEED_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3] as const;
@@ -16,6 +18,9 @@ const SPEED_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3] as const;
 export function PlayerPage() {
   const { code } = useParams<{ code: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
+  const navState = (location.state as { mode?: string } | null) ?? null;
+  const isScreenShare = navState?.mode === 'screen-share';
   const { status, send, userId } = useWebSocket();
 
   const [phase, setPhase] = useState<Phase>('loading');
@@ -33,6 +38,25 @@ export function PlayerPage() {
 
   // 初始化播放器
   useEffect(() => {
+    // 屏幕分享模式：使用远端流
+    if (isScreenShare) {
+      const stream = screenShareStore.getActiveStream();
+      if (!stream || !containerRef.current) {
+        setPhase('missing-file');
+        return;
+      }
+      const adapter = new WebrtcStreamAdapter(containerRef.current);
+      adapterRef.current = adapter as unknown as LocalFileAdapter;
+      adapter.load({ kind: 'webrtc-stream', stream }).then(() => {
+        adapter.play().catch(() => {});
+        setPhase('viewing');
+      }).catch(() => {
+        Notification.error({ message: '流加载失败' });
+        navigate(`/room/${code}`);
+      });
+      return () => { adapter.destroy(); screenShareStore.reset(); };
+    }
+
     const file = getSharedFile();
     // Fix: 无文件时不立即 navigate（避免与 session:restored 竞态），
     // 改为展示友好提示，用户可手动返回
@@ -128,6 +152,16 @@ export function PlayerPage() {
       setPeerReady(true);
     }
 
+    // screen:stop → 对方停止分享
+    if (msg.type === 'screen:stop') {
+      if (isScreenShare) {
+        Notification.info({ message: '分享已结束', description: '对方停止了屏幕分享' });
+        screenShareStore.reset();
+        navigate(`/room/${code}`);
+      }
+      return;
+    }
+
     // Bug C: 对方离开 → 自动暂停视频，保留"继续播放"选项
     if (msg.type === 'room:left') {
       adapterRef.current?.pause();
@@ -213,10 +247,12 @@ export function PlayerPage() {
         {phase === 'missing-file' && (
           <Card color="app-yellow" className="text-center">
             <p className="text-sm text-[#725d42] mb-1">
-              视频文件已失效
+              {isScreenShare ? '屏幕分享流已断开' : '视频文件已失效'}
             </p>
             <p className="text-xs opacity-60 mb-4">
-              刷新页面后需要重新选择文件，请返回房间重新操作
+              {isScreenShare
+                ? '对方已停止分享或连接中断'
+                : '刷新页面后需要重新选择文件，请返回房间重新操作'}
             </p>
             <Button type="primary" size="large" onClick={() => navigate(`/room/${code}`)}>
               返回房间
@@ -224,7 +260,22 @@ export function PlayerPage() {
           </Card>
         )}
 
-        {phase === 'ready-prompt' && (
+        {phase === 'viewing' && (
+          <Card color="app-green" className="text-center">
+            <div className="flex items-center justify-center gap-2 text-sm text-[#725d42] mb-1">
+              <Monitor size={16} />
+              {status === 'connected' ? (
+                <Wifi size={14} className="text-green-500" />
+              ) : (
+                <WifiOff size={14} className="text-yellow-500" />
+              )}
+              正在观看
+            </div>
+            <p className="text-xs opacity-40">实时屏幕分享（纯跟随模式）</p>
+          </Card>
+        )}
+
+        {!isScreenShare && phase === 'ready-prompt' && (
           <Card color="app-green" className="text-center">
             <p className="text-sm mb-3 text-[#725d42]">
               双方都点击"准备好了"后开始同步播放

@@ -2,10 +2,20 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Card, Title, Input, Notification } from 'animal-island-ui';
 import { useWebSocket, useWsMessage } from '../../hooks/useWebSocket';
+import { FileVideo, Monitor, Users } from 'lucide-react';
+
+type RoomMode = 'local-sync' | 'file-transfer' | 'screen-share';
+
+const MODE_OPTIONS: { mode: RoomMode; label: string; desc: string; icon: typeof Users }[] = [
+  { mode: 'local-sync', label: '本地同步', desc: '双方各自有同一文件，同步播放', icon: Users },
+  { mode: 'file-transfer', label: '文件传输', desc: '房主把视频传给你一起看', icon: FileVideo },
+  { mode: 'screen-share', label: '屏幕分享', desc: '实时分享屏幕内容给对方', icon: Monitor },
+];
 
 export function HomePage() {
   const navigate = useNavigate();
   const [roomCode, setRoomCode] = useState('');
+  const [mode, setMode] = useState<RoomMode>('local-sync');
   const { status, send, restoredData } = useWebSocket();
   const restoredHandledRef = useRef(false);
 
@@ -14,7 +24,11 @@ export function HomePage() {
     if (restoredData && !restoredHandledRef.current) {
       restoredHandledRef.current = true;
       navigate(`/room/${restoredData.roomCode}`, {
-        state: { role: restoredData.role, peerCount: restoredData.peerOnline ? 1 : 0 },
+        state: {
+          role: restoredData.role,
+          peerCount: restoredData.peerOnline ? 1 : 0,
+          mode: (restoredData as { mode?: string }).mode ?? 'local-sync',
+        },
         replace: true,
       });
     }
@@ -24,13 +38,13 @@ export function HomePage() {
     const data = msg.data as Record<string, unknown>;
 
     if (msg.type === 'room:created') {
-      navigate(`/room/${data.roomCode}`, { state: { role: 'host' } });
+      navigate(`/room/${data.roomCode}`, { state: { role: 'host', mode: data.mode ?? 'local-sync' } });
       return;
     }
 
     if (msg.type === 'room:joined') {
       navigate(`/room/${msg.room}`, {
-        state: { role: data.role ?? 'guest', peerCount: data.peerCount ?? 1 },
+        state: { role: data.role ?? 'guest', peerCount: data.peerCount ?? 1, mode: data.mode ?? 'local-sync' },
       });
       return;
     }
@@ -61,7 +75,7 @@ export function HomePage() {
       });
       return;
     }
-    send({ type: 'room:create', data: {} });
+    send({ type: 'room:create', data: { mode } });
   };
 
   const handleJoin = () => {
@@ -91,6 +105,41 @@ export function HomePage() {
 
       <Card color="app-blue" className="mt-8 max-w-sm w-full">
         <div className="flex flex-col gap-4">
+          {/* 模式选择器 */}
+          <div className="space-y-2">
+            <p className="text-xs opacity-50">选择模式</p>
+            <div className="grid gap-2">
+              {MODE_OPTIONS.map(opt => {
+                const Icon = opt.icon;
+                const selected = mode === opt.mode;
+                return (
+                  <button
+                    key={opt.mode}
+                    className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-all text-left ${
+                      selected
+                        ? 'border-[#19c8b9] bg-[#f0faf9]'
+                        : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                    onClick={() => setMode(opt.mode)}
+                  >
+                    <Icon size={20} className={selected ? 'text-[#19c8b9]' : 'text-gray-400'} />
+                    <div>
+                      <p className={`text-sm font-medium ${selected ? 'text-[#19c8b9]' : 'text-gray-600'}`}>
+                        {opt.label}
+                      </p>
+                      <p className="text-[10px] opacity-50">{opt.desc}</p>
+                    </div>
+                    {selected && (
+                      <div className="ml-auto w-4 h-4 rounded-full bg-[#19c8b9] flex items-center justify-center">
+                        <span className="text-white text-[10px] font-bold">✓</span>
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           <Button
             type="primary"
             size="large"
