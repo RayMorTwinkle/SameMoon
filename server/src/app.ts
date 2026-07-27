@@ -139,6 +139,10 @@ export async function buildApp(): Promise<FastifyInstance> {
         case 'sync:seek':
         case 'sync:rate':
         case 'sync:heartbeat':
+        case 'sync:state':
+        case 'sync:buffering':
+        case 'sync:ready':
+        case 'player:ready':
         case 'chat:message': {
           if (!currentRoom) break;
           roomManager.broadcast(currentRoom, {

@@ -1,0 +1,110 @@
+import Artplayer from 'artplayer';
+import type { PlaybackAdapter, PlaybackSource, AdapterEvent } from './PlaybackAdapter';
+
+/**
+ * 本地文件播放适配器（ArtPlayer 封装）
+ * 见 TECH-SPEC §2
+ */
+export class LocalFileAdapter implements PlaybackAdapter {
+  private art: Artplayer | null = null;
+  private objectUrl: string | null = null;
+  private listeners = new Map<AdapterEvent, Set<(detail?: unknown) => void>>();
+  private container: HTMLElement;
+
+  constructor(container: HTMLElement) {
+    this.container = container;
+  }
+
+  async load(source: PlaybackSource): Promise<void> {
+    if (source.kind !== 'local-file') {
+      throw new Error('LocalFileAdapter only supports local-file source');
+    }
+
+    // 清理旧实例
+    this.destroy();
+
+    this.objectUrl = URL.createObjectURL(source.file);
+
+    this.art = new Artplayer({
+      container: this.container,
+      url: this.objectUrl,
+      autoplay: false,
+      autoSize: false,
+      autoMini: true,
+      loop: false,
+      flip: false,
+      playbackRate: true,
+      fullscreen: true,
+      fullscreenWeb: true,
+      pip: true,
+      theme: '#19c8b9',
+    });
+
+    // 挂接事件（见 TECH-SPEC §2.1）
+    this.art.on('play', () => this.emit('play'));
+    this.art.on('pause', () => this.emit('pause'));
+    this.art.on('seek', () => this.emit('seeked'));
+    this.art.on('video:ratechange', () => this.emit('ratechange'));
+    this.art.on('video:waiting', () => this.emit('waiting'));
+    this.art.on('video:canplay', () => this.emit('canplay'));
+    this.art.on('video:error', () => this.emit('error'));
+    this.art.on('video:ended', () => this.emit('ended'));
+  }
+
+  async play(): Promise<void> {
+    // 透传 play() 的 rejection（自动播放策略，TECH-SPEC §2.4）
+    await this.art?.play();
+  }
+
+  pause(): void {
+    this.art?.pause();
+  }
+
+  seek(time: number): void {
+    if (this.art) {
+      this.art.seek = time;
+    }
+  }
+
+  setRate(rate: number): void {
+    if (this.art) {
+      this.art.playbackRate = rate;
+    }
+  }
+
+  getTime(): number {
+    return this.art?.currentTime ?? 0;
+  }
+
+  getPaused(): boolean {
+    return this.art?.paused ?? true;
+  }
+
+  getRate(): number {
+    return this.art?.playbackRate ?? 1;
+  }
+
+  on(evt: AdapterEvent, cb: (detail?: unknown) => void): () => void {
+    if (!this.listeners.has(evt)) {
+      this.listeners.set(evt, new Set());
+    }
+    this.listeners.get(evt)!.add(cb);
+    return () => { this.listeners.get(evt)?.delete(cb); };
+  }
+
+  destroy(): void {
+    if (this.art) {
+      this.art.destroy(false); // false = 不移除 DOM 容器
+      this.art = null;
+    }
+    if (this.objectUrl) {
+      URL.revokeObjectURL(this.objectUrl);
+      this.objectUrl = null;
+    }
+    this.listeners.clear();
+  }
+
+  private emit(evt: AdapterEvent, detail?: unknown): void {
+    this.listeners.get(evt)?.forEach(cb => cb(detail));
+  }
+}

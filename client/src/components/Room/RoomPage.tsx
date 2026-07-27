@@ -4,6 +4,7 @@ import { Button, Card, Title, Notification } from 'animal-island-ui';
 import { useWebSocket, useWsMessage } from '../../hooks/useWebSocket';
 import { isValidVideoFile, FORMAT_HINT } from '../../utils/fileValidator';
 import { formatFileSize } from '../../utils/formatFileSize';
+import { setSharedFile } from '../../services/room/fileStore';
 import { Link, UserPlus, FileVideo, CheckCircle, XCircle, Clock } from 'lucide-react';
 
 type PeerStatus = 'waiting' | 'joined';
@@ -290,8 +291,13 @@ export function RoomPage() {
       {/* 匹配成功后的下一步 */}
       {matchStatus === 'matched' && (
         <div className="mt-4 max-w-sm w-full">
-          <Button type="primary" size="large" block disabled>
-            进入播放（下一步实现）
+          <Button type="primary" size="large" block onClick={() => {
+            if (selectedFile) {
+              setSharedFile(selectedFile);
+              navigate(`/room/${code}/play`);
+            }
+          }}>
+            进入播放
           </Button>
         </div>
       )}
