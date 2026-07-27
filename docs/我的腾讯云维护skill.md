@@ -45,6 +45,8 @@ sudo apt install <包名>
 
 ```
 GitHub 仓库（权威源，不含 secrets）
+  ├── ServerX: https://github.com/RayMorTwinkle/ServerX (部署配置)
+  └── SameMoon: https://github.com/RayMorTwinkle/SameMoon (源码)
      │  git pull
      ▼
 服务器 ~/app-configs/<项目名>/（运行态，含 .env）
@@ -56,6 +58,12 @@ GitHub backup 分支 或 本地电脑
 - 部署/更新：`cd ~/app-configs/<项目> && git pull && docker compose up -d`
 - 备份：`tar -czf backup-$(date +%F).tar.gz ~/app-configs/`
 - `.env` 绝不进 GitHub，只在服务器上
+
+## 当前已部署服务
+
+| 端口 | 项目 | 容器 | 配置目录 |
+|------|------|------|----------|
+| 3000 | SameMoon | sm-client / sm-server | `~/app-configs/same-moon/` |
 
 ## 迁移流程（换新服务器时）
 

@@ -138,7 +138,11 @@ interface VoiceChannel {
 | `file:match` | S→C | `{ matched, diff? }` |
 | `sync:play` / `sync:pause` / `sync:seek` | C↔C | `{ time, timestamp }` |
 | `sync:rate` | C↔C | `{ rate, timestamp }` |
-| `sync:heartbeat` | 双向 | `{ clientTime }` |
+| `sync:heartbeat` | 双向 | 请求 `{ clientTime, time, paused, rate }`；响应额外 `{ echoOf, t1 }`（t0=clientTime, t1=接收时刻, t2=clientTime） |
+| `sync:state` | C↔C | 请求 `{}`；响应 `{ paused, time, rate, seq, senderId, sentAt }` |
+| `sync:buffering` | C↔C | `{ time }`（对方在缓冲，己方暂停等待） |
+| `sync:ready` | C↔C | `{ time }`（对方缓冲结束，对齐恢复） |
+| `player:ready` | C↔C | `{}`（"准备好了"授权完成，通知对方） |
 | `chat:message` | C↔C | `{ text }`（≤500字符） |
 | `error` | S→C | `{ code, message }` |
 
@@ -146,12 +150,16 @@ interface VoiceChannel {
 
 | type | 方向 | 用途 | 阶段 |
 |------|------|------|------|
-| `session:hello` / `session:restored` | C→S / S→C | 断线重连恢复会话 | Phase 1 Step 5 |
-| `sync:state` | C↔C | 全量状态快照（重连/迟到追齐） | Phase 1 Step 4 |
-| `sync:buffering` / `sync:ready` | C↔C | 缓冲协商 | Phase 1 Step 4 |
 | `rtc:offer` / `rtc:answer` / `rtc:ice` | C→S→C | WebRTC 信令 | Phase 2 |
 | `source:set` | C↔C | 设置在线视频源 `{ kind, url }` | Phase 3 |
 | `browse:navigate` | C↔C | 链接跟随 `{ url }` | Phase 4 |
+
+**已实现（Step 5）**：
+
+| type | 方向 | data |
+|------|------|------|
+| `session:hello` | C→S | `{ sessionId }`（连接后第一条消息） |
+| `session:restored` | S→C | `{ sessionId, roomCode, role, roomState, peerOnline, fileName?, fileSize? }` |
 
 **协议纪律**：新增消息类型必须同步更新本表 + server/src/ws/protocol.ts + 集成测试。
 
@@ -318,9 +326,9 @@ SameMoon/
 
 - [x] Step 1 前后端初始化（React19+Vite8+Tailwind4+animal-island-ui / Fastify+ws）
 - [x] Step 2 房间系统（创建/加入/链接分享/幂等防重/12 个测试）
-- [ ] Step 3 文件选择 + 验证 UI（后端 file:info/file:match 已就绪）：拖拽/点击选择、白名单校验、大小格式化、匹配状态展示、不匹配差异提示
-- [ ] Step 4 播放器 + 同步引擎：ArtPlayer + LocalFileAdapter + SyncEngine（按 TECH-SPEC §1、§2 实现，含"准备好了"授权按钮、缓冲协商、sync:state 追齐）
-- [ ] Step 5 会话恢复 + 错误处理收尾：sessionId 重连（TECH-SPEC §3）、服务端加固（TECH-SPEC §6）、调试面板、ErrorBoundary
+- [x] Step 3 文件选择 + 验证 UI（后端 file:info/file:match 已就绪）：拖拽/点击选择、白名单校验、大小格式化、匹配状态展示、不匹配差异提示
+- [x] Step 4 播放器 + 同步引擎：ArtPlayer + LocalFileAdapter + SyncEngine（按 TECH-SPEC §1、§2 实现，含"准备好了"授权按钮、缓冲协商、sync:state 追齐）
+- [x] Step 5 会话恢复 + 错误处理收尾：sessionId 重连（TECH-SPEC §3）、服务端加固（TECH-SPEC §6）、调试面板、ErrorBoundary
 
 **验收**：两台设备完整走通：创建→加入→选同一文件→同步播放/暂停/拖动；刷新一方 30s 内恢复；故意选错文件有清晰提示。
 

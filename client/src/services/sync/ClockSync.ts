@@ -3,14 +3,46 @@
  * 见 TECH-SPEC §1.2
  */
 
+export interface Clock {
+  now(): number;
+  setTimeout(cb: () => void, ms: number): ReturnType<typeof setTimeout>;
+  clearTimeout(id: ReturnType<typeof setTimeout>): void;
+  setInterval(cb: () => void, ms: number): ReturnType<typeof setInterval>;
+  clearInterval(id: ReturnType<typeof setInterval>): void;
+}
+
+/** 真实时钟（生产用） */
+export class SystemClock implements Clock {
+  now(): number {
+    return Date.now();
+  }
+  setTimeout(cb: () => void, ms: number): ReturnType<typeof setTimeout> {
+    return setTimeout(cb, ms);
+  }
+  clearTimeout(id: ReturnType<typeof setTimeout>): void {
+    clearTimeout(id);
+  }
+  setInterval(cb: () => void, ms: number): ReturnType<typeof setInterval> {
+    return setInterval(cb, ms);
+  }
+  clearInterval(id: ReturnType<typeof setInterval>): void {
+    clearInterval(id);
+  }
+}
+
 export interface ClockSample {
   offset: number; // 对方时钟 - 本地时钟（ms）
   rtt: number;    // 往返时间（ms）
 }
 
-export class ClockSync {
+export class ClockSync implements Clock {
   private samples: ClockSample[] = [];
   private readonly maxSamples = 10;
+  private readonly clock: Clock;
+
+  constructor(clock: Clock = new SystemClock()) {
+    this.clock = clock;
+  }
 
   /** 记录一次采样结果 */
   addSample(t0: number, t1: number, t2: number, t3: number): void {
@@ -42,7 +74,23 @@ export class ClockSync {
 
   /** 获取当前校准后的"统一时间"（用于消息 sentAt 字段） */
   now(): number {
-    return Date.now() + this.getOffset();
+    return this.clock.now() + this.getOffset();
+  }
+
+  setTimeout(cb: () => void, ms: number): ReturnType<typeof setTimeout> {
+    return this.clock.setTimeout(cb, ms);
+  }
+
+  clearTimeout(id: ReturnType<typeof setTimeout>): void {
+    this.clock.clearTimeout(id);
+  }
+
+  setInterval(cb: () => void, ms: number): ReturnType<typeof setInterval> {
+    return this.clock.setInterval(cb, ms);
+  }
+
+  clearInterval(id: ReturnType<typeof setInterval>): void {
+    this.clock.clearInterval(id);
   }
 
   /** 是否已有足够样本（≥3） */

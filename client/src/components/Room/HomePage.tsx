@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Card, Title, Input, Notification } from 'animal-island-ui';
 import { useWebSocket, useWsMessage } from '../../hooks/useWebSocket';
@@ -6,23 +6,44 @@ import { useWebSocket, useWsMessage } from '../../hooks/useWebSocket';
 export function HomePage() {
   const navigate = useNavigate();
   const [roomCode, setRoomCode] = useState('');
-  const { status, send } = useWebSocket();
+  const { status, send, restoredData } = useWebSocket();
+  const restoredHandledRef = useRef(false);
+
+  // 收到 session:restored 后自动跳转到房间页（仅首次）
+  useEffect(() => {
+    if (restoredData && !restoredHandledRef.current) {
+      restoredHandledRef.current = true;
+      navigate(`/room/${restoredData.roomCode}`, {
+        state: { role: restoredData.role, peerCount: restoredData.peerOnline ? 1 : 0 },
+        replace: true,
+      });
+    }
+  }, [restoredData, navigate]);
 
   const handleMessage = useCallback((msg: Record<string, unknown>) => {
     const data = msg.data as Record<string, unknown>;
 
     if (msg.type === 'room:created') {
-      // 通过路由 state 传递角色，RoomPage 据此跳过自动 join
       navigate(`/room/${data.roomCode}`, { state: { role: 'host' } });
+      return;
     }
 
     if (msg.type === 'room:joined') {
       navigate(`/room/${msg.room}`, {
         state: { role: data.role ?? 'guest', peerCount: data.peerCount ?? 1 },
       });
+      return;
     }
 
     if (msg.type === 'error') {
+      const code = data.code as string | undefined;
+      if (code === 'ALREADY_IN_ROOM') {
+        Notification.warning({
+          message: '你还在之前的房间里',
+          description: '请点击下方「重置连接」清除旧会话，或直接关闭页面重开',
+        });
+        return;
+      }
       Notification.error({
         message: '操作失败',
         description: (data.message as string) || '请稍后重试',
@@ -33,13 +54,30 @@ export function HomePage() {
   useWsMessage(handleMessage);
 
   const handleCreate = () => {
-    if (status !== 'connected') return;
+    if (status !== 'connected') {
+      Notification.info({
+        message: '正在连接服务器…',
+        description: status === 'reconnecting' ? '重连中，请稍等' : '请等待连接建立',
+      });
+      return;
+    }
     send({ type: 'room:create', data: {} });
   };
 
   const handleJoin = () => {
-    if (status !== 'connected' || roomCode.length !== 4) return;
+    if (status !== 'connected') {
+      Notification.info({ message: '正在连接服务器…', description: '请等待连接建立' });
+      return;
+    }
+    if (roomCode.length !== 4) return;
     send({ type: 'room:join', data: { roomCode } });
+  };
+
+  // 重置连接：清除旧 session，强制全新开始
+  const handleResetSession = () => {
+    sessionStorage.removeItem('sm-session');
+    restoredHandledRef.current = false;
+    window.location.reload();
   };
 
   const connected = status === 'connected';
@@ -97,6 +135,14 @@ export function HomePage() {
           {status === 'disconnected' && '已断开'}
         </span>
       </div>
+
+      {/* 重置连接入口 */}
+      <button
+        className="mt-4 text-xs opacity-30 hover:opacity-60 transition-opacity underline"
+        onClick={handleResetSession}
+      >
+        重置连接（清除旧会话）
+      </button>
     </div>
   );
 }

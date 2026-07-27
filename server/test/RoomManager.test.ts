@@ -1,8 +1,7 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { RoomManager } from '../src/room/RoomManager.js';
 import type { WebSocket } from 'ws';
 
-/** 伪造一个 WebSocket（只记录发送的消息） */
 function fakeWs(): WebSocket & { sent: string[] } {
   const sent: string[] = [];
   return {
@@ -16,7 +15,7 @@ describe('RoomManager', () => {
   let rm: RoomManager;
 
   beforeEach(() => {
-    rm = new RoomManager();
+    rm = new RoomManager({ disconnectTimeoutMs: 100 });
   });
 
   it('创建房间：生成4位数字房间号，创建者为 host', () => {
@@ -39,14 +38,13 @@ describe('RoomManager', () => {
     expect(joined!.state).toBe('selecting');
   });
 
-  it('幂等：同一用户重复加入不改变角色和人数（房主 join 自己的房间不会变 guest）', () => {
+  it('幂等：同一用户重复加入不改变角色和人数', () => {
     const room = rm.createRoom('user-a', fakeWs());
-    // 房主重复 join（这正是之前 bug 的场景）
     const rejoined = rm.joinRoom(room.code, 'user-a', fakeWs());
 
     expect(rejoined).not.toBeNull();
     expect(rejoined!.users.size).toBe(1);
-    expect(rejoined!.users.get('user-a')?.role).toBe('host'); // 角色不变！
+    expect(rejoined!.users.get('user-a')?.role).toBe('host');
     expect(rejoined!.state).toBe('waiting');
   });
 
@@ -67,10 +65,10 @@ describe('RoomManager', () => {
     rm.joinRoom(room.code, 'user-b', fakeWs());
 
     rm.leaveRoom(room.code, 'user-a');
-    expect(rm.getRoom(room.code)).toBeDefined(); // 还有 b
+    expect(rm.getRoom(room.code)).toBeDefined();
 
     rm.leaveRoom(room.code, 'user-b');
-    expect(rm.getRoom(room.code)).toBeUndefined(); // 销毁
+    expect(rm.getRoom(room.code)).toBeUndefined();
     expect(rm.activeRoomCount).toBe(0);
   });
 
@@ -85,5 +83,85 @@ describe('RoomManager', () => {
     expect(wsA.sent.length).toBe(0);
     expect(wsB.sent.length).toBe(1);
     expect(JSON.parse(wsB.sent[0]).type).toBe('test');
+  });
+
+  it('断线重连流程：标记离线 → 重连换绑 ws → 恢复状态', () => {
+    const wsA = fakeWs();
+    const wsB1 = fakeWs();
+    const room = rm.createRoom('user-a', wsA);
+    rm.joinRoom(room.code, 'user-b', wsB1);
+    room.state = 'playing';
+
+    // 标记 B 离线
+    rm.markOffline(room.code, 'user-b');
+    expect(room.state).toBe('reconnecting');
+    expect(room.users.get('user-b')!.ws).toBeNull();
+
+    // B 重连
+    const wsB2 = fakeWs();
+    const reconnected = rm.reconnectUser(room.code, 'user-b', wsB2);
+    expect(reconnected).toBe(true);
+    expect(room.users.get('user-b')!.ws).toBe(wsB2);
+    expect(room.state).toBe('playing');
+  });
+
+  it('断线超时 → forceRemove 清理用户', () => {
+    const wsA = fakeWs();
+    const wsB = fakeWs();
+    const room = rm.createRoom('user-a', wsA);
+    rm.joinRoom(room.code, 'user-b', wsB);
+
+    // 标记 B 离线
+    rm.markOffline(room.code, 'user-b');
+
+    // 启动超时定时器
+    let expiredSessionId: string | null = null;
+    let expiredRoomCode: string | null = null;
+    rm.onDisconnectExpired = (sid, code) => {
+      expiredSessionId = sid;
+      expiredRoomCode = code;
+    };
+    rm.startDisconnectTimer('user-b', room.code);
+
+    // 等待超时
+    vi.useFakeTimers();
+    rm.startDisconnectTimer('user-b', room.code);
+    vi.advanceTimersByTime(150);
+    vi.useRealTimers();
+
+    expect(expiredSessionId).toBe('user-b');
+    expect(expiredRoomCode).toBe(room.code);
+
+    // 强制移除
+    rm.forceRemove(room.code, 'user-b');
+    expect(room.users.has('user-b')).toBe(false);
+  });
+
+  it('重连时清除断线定时器', () => {
+    const room = rm.createRoom('user-a', fakeWs());
+    rm.joinRoom(room.code, 'user-b', fakeWs());
+    rm.markOffline(room.code, 'user-b');
+
+    let expired = false;
+    rm.onDisconnectExpired = () => { expired = true; };
+    rm.startDisconnectTimer('user-b', room.code);
+
+    // 重连
+    rm.reconnectUser(room.code, 'user-b', fakeWs());
+    rm.clearDisconnectTimer('user-b');
+
+    // 超时不应触发
+    expect(expired).toBe(false);
+  });
+
+  it('getPeerOnline：正确反映对方在线状态', () => {
+    const room = rm.createRoom('user-a', fakeWs());
+    expect(rm.getPeerOnline(room.code, 'user-a')).toBe(false);
+
+    rm.joinRoom(room.code, 'user-b', fakeWs());
+    expect(rm.getPeerOnline(room.code, 'user-a')).toBe(true);
+
+    rm.markOffline(room.code, 'user-b');
+    expect(rm.getPeerOnline(room.code, 'user-a')).toBe(false);
   });
 });

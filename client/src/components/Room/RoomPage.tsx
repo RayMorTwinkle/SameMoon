@@ -5,7 +5,7 @@ import { useWebSocket, useWsMessage } from '../../hooks/useWebSocket';
 import { isValidVideoFile, FORMAT_HINT } from '../../utils/fileValidator';
 import { formatFileSize } from '../../utils/formatFileSize';
 import { setSharedFile } from '../../services/room/fileStore';
-import { Link, UserPlus, FileVideo, CheckCircle, XCircle, Clock } from 'lucide-react';
+import { Link, UserPlus, FileVideo, CheckCircle, XCircle, Clock, Home, ArrowLeft, RefreshCw } from 'lucide-react';
 
 type PeerStatus = 'waiting' | 'joined';
 type FileMatchStatus = 'idle' | 'sent' | 'matched' | 'mismatched';
@@ -27,14 +27,19 @@ export function RoomPage() {
   );
   const [copied, setCopied] = useState(false);
   const joinSentRef = useRef(false);
-  const { status, send } = useWebSocket();
+  const { status, send, restoredData } = useWebSocket();
 
   // 文件选择相关状态
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [matchStatus, setMatchStatus] = useState<FileMatchStatus>('idle');
   const [matchDiff, setMatchDiff] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [roomClosed, setRoomClosed] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 重连带出上次文件名（用于提示用户）
+  const [restoreFileName, setRestoreFileName] = useState<string | null>(null);
+  const [restoreFileSize, setRestoreFileSize] = useState<number | null>(null);
 
   const handleMessage = useCallback((msg: Record<string, unknown>) => {
     const data = msg.data as Record<string, unknown>;
@@ -47,11 +52,22 @@ export function RoomPage() {
 
       case 'room:peer-joined':
         setPeerStatus('joined');
-        Notification.success({
-          message: '对方已加入',
-          description: '可以开始选择电影文件了',
+        // 对方重连 → 文件已失效，重置匹配状态
+        setMatchStatus('idle');
+        setSelectedFile(null);
+        setMatchDiff(null);
+        Notification.info({
+          message: '对方已重新加入',
+          description: '需要重新选择文件进行验证',
         });
         break;
+
+      case 'file:reset': {
+        // 服务端通知：对方重连，fileInfo 已清除，需要重新验证
+        setMatchStatus('idle');
+        setMatchDiff(null);
+        break;
+      }
 
       case 'room:left':
         setPeerStatus('waiting');
@@ -83,28 +99,58 @@ export function RoomPage() {
           message: '出错了',
           description: (data.message as string) || '请稍后重试',
         });
-        navigate('/');
+        if ((data.code as string) === 'ROOM_NOT_FOUND') {
+          setRoomClosed(true);
+        } else if ((data.code as string) !== 'ALREADY_IN_ROOM') {
+          navigate('/');
+        }
         break;
     }
   }, [navigate]);
 
   useWsMessage(handleMessage);
 
-  // 仅当直接通过 URL 进入（无路由 state 角色）时才自动 join
-  // Fix R12: 重连后 status 重新变为 connected 时允许重新 join
+  // TECH-SPEC §3.3: 重连恢复 — 从 session:restored 恢复房间状态
+  const restoredActiveRef = useRef(false);
+  useEffect(() => {
+    if (restoredData && restoredData.roomCode === code) {
+      restoredActiveRef.current = true;
+      setRole(restoredData.role);
+      setPeerStatus(restoredData.peerOnline ? 'joined' : 'waiting');
+      // 保存上次文件名用于提示（服务端已清除 fileInfo，需要重新选择）
+      if (restoredData.fileName) {
+        setRestoreFileName(restoredData.fileName);
+        setRestoreFileSize(restoredData.fileSize ?? null);
+      }
+      // 确保匹配状态是 idle（需要重新选文件验证）
+      setMatchStatus('idle');
+      setSelectedFile(null);
+    }
+  }, [restoredData, code]);
+
+  // 自动 join（仅当无 restoredData 时才执行，防止竞态）
   const prevStatusRef = useRef(status);
   useEffect(() => {
     const wasDisconnected = prevStatusRef.current !== 'connected';
     prevStatusRef.current = status;
 
+    if (restoredActiveRef.current) return;
+
     if (status === 'connected' && code && !role) {
-      // 首次进入或重连后都重新 join（服务端幂等，不会重复加入）
       if (!joinSentRef.current || wasDisconnected) {
         joinSentRef.current = true;
         send({ type: 'room:join', data: { roomCode: code } });
       }
     }
   }, [status, code, role, send]);
+
+  const handleLeaveRoom = () => {
+    if (window.confirm('确定要离开房间吗？')) {
+      // 清除 session 避免下次自动恢复
+      sessionStorage.removeItem('sm-session');
+      navigate('/');
+    }
+  };
 
   const handleCopyLink = async () => {
     const url = `${window.location.origin}/room/${code}`;
@@ -117,7 +163,6 @@ export function RoomPage() {
     }
   };
 
-  // 文件选择处理
   const handleFileSelect = (file: File) => {
     if (!isValidVideoFile(file)) {
       Notification.error({
@@ -129,13 +174,13 @@ export function RoomPage() {
     setSelectedFile(file);
     setMatchStatus('sent');
     setMatchDiff(null);
+    setRestoreFileName(null);
     send({ type: 'file:info', data: { name: file.name, size: file.size } });
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) handleFileSelect(file);
-    // 清空 input 以便重复选择同一文件
     e.target.value = '';
   };
 
@@ -147,7 +192,7 @@ export function RoomPage() {
   };
 
   const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault(); // 必须！否则 drop 不触发
+    e.preventDefault();
     setDragOver(true);
   };
 
@@ -159,6 +204,31 @@ export function RoomPage() {
   };
 
   const peerJoined = peerStatus === 'joined';
+
+  // 房间已关闭
+  if (roomClosed) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center p-6">
+        <Title size="large" color="app-green">
+          房间已关闭
+        </Title>
+        <Card color="app-yellow" className="mt-6 max-w-sm w-full">
+          <div className="text-center py-4">
+            <p className="text-sm text-[#725d42] mb-2">
+              房间 {code} 已关闭或不存在
+            </p>
+            <p className="text-xs opacity-60 mb-4">
+              可能原因：双方都刷新了页面、房间超时无人加入、或服务器重启
+            </p>
+            <Button type="primary" size="large" block onClick={() => navigate('/')}>
+              <Home size={18} className="mr-1 inline" />
+              返回首页创建新房间
+            </Button>
+          </div>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-6">
@@ -220,7 +290,7 @@ export function RoomPage() {
         </div>
       </Card>
 
-      {/* 文件选择区（对方加入后激活） */}
+      {/* 文件选择区 */}
       <Card color="app-pink" className="mt-4 max-w-sm w-full">
         <input
           ref={fileInputRef}
@@ -230,12 +300,25 @@ export function RoomPage() {
           onChange={handleInputChange}
         />
 
+        {/* 重连后提示重新选择文件 */}
+        {restoreFileName && (
+          <div className="flex items-center gap-2 bg-[#eff6ff] border border-[#3b82f6] rounded-lg p-3 mb-3">
+            <RefreshCw size={16} className="text-blue-500 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium text-[#1e40af]">已恢复房间，请重新选择文件</p>
+              <p className="text-[10px] text-[#3b82f6] truncate">
+                上次选择：{restoreFileName}
+                {restoreFileSize ? ` (${formatFileSize(restoreFileSize)})` : ''}
+              </p>
+            </div>
+          </div>
+        )}
+
         {!peerJoined ? (
           <p className="text-center text-xs opacity-40 py-4">
             等待对方加入后，双方各自选择同一部电影
           </p>
         ) : matchStatus === 'idle' ? (
-          /* 拖拽/点击选择区 */
           <div
             className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-colors ${
               dragOver ? 'border-[#19c8b9] bg-[#e6f9f6]' : 'border-[#c4b89e] hover:border-[#19c8b9]'
@@ -251,7 +334,6 @@ export function RoomPage() {
             <p className="text-xs opacity-40 mt-2">文件不会上传，仅在你的设备上播放</p>
           </div>
         ) : (
-          /* 已选择文件 → 显示文件信息 + 匹配状态 */
           <div>
             <div className="flex items-center gap-3 p-3 bg-white/50 rounded-lg">
               <FileVideo size={24} className="text-[#19c8b9] shrink-0" />
@@ -264,7 +346,6 @@ export function RoomPage() {
               </Button>
             </div>
 
-            {/* 匹配状态 */}
             <div className="mt-3 space-y-2">
               {matchStatus === 'sent' && (
                 <div className="flex items-center gap-2 text-xs text-[#92400e] bg-[#fffbeb] rounded-lg p-2">
@@ -310,16 +391,33 @@ export function RoomPage() {
         </div>
       )}
 
-      {/* 连接状态 */}
-      <div className="mt-4 flex items-center gap-2 text-xs opacity-50">
-        <span
-          className={`inline-block w-2 h-2 rounded-full ${
-            status === 'connected' ? 'bg-green-400' : 'bg-yellow-400 animate-pulse'
-          }`}
-        />
-        <span>
-          {status === 'connected' ? '已连接' : status === 'reconnecting' ? '重连中…' : '连接中…'}
-        </span>
+      {/* 连接状态 + 操作 */}
+      <div className="mt-4 flex items-center justify-between px-2 w-full max-w-sm">
+        <div className="flex items-center gap-2 text-xs opacity-50">
+          <span
+            className={`inline-block w-2 h-2 rounded-full ${
+              status === 'connected' ? 'bg-green-400' : 'bg-yellow-400 animate-pulse'
+            }`}
+          />
+          <span>
+            {status === 'connected' ? '已连接' : status === 'reconnecting' ? '重连中…' : '连接中…'}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            className="flex items-center gap-1 text-xs opacity-40 hover:opacity-70 transition-opacity"
+            onClick={handleLeaveRoom}
+          >
+            离开房间
+          </button>
+          <button
+            className="flex items-center gap-1 text-xs opacity-50 hover:opacity-80 transition-opacity"
+            onClick={() => navigate('/')}
+          >
+            <ArrowLeft size={12} />
+            返回首页
+          </button>
+        </div>
       </div>
     </div>
   );

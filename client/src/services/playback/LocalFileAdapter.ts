@@ -10,6 +10,8 @@ export class LocalFileAdapter implements PlaybackAdapter {
   private objectUrl: string | null = null;
   private listeners = new Map<AdapterEvent, Set<(detail?: unknown) => void>>();
   private container: HTMLElement;
+  // 内部缓存的 paused 状态，解决 art.play() 异步导致事件触发时状态滞后问题
+  private _paused = true;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -41,8 +43,8 @@ export class LocalFileAdapter implements PlaybackAdapter {
     });
 
     // 挂接事件（见 TECH-SPEC §2.1）
-    this.art.on('play', () => this.emit('play'));
-    this.art.on('pause', () => this.emit('pause'));
+    this.art.on('play', () => { this._paused = false; this.emit('play'); });
+    this.art.on('pause', () => { this._paused = true; this.emit('pause'); });
     this.art.on('seek', () => this.emit('seeked'));
     this.art.on('video:ratechange', () => this.emit('ratechange'));
     this.art.on('video:waiting', () => this.emit('waiting'));
@@ -52,11 +54,14 @@ export class LocalFileAdapter implements PlaybackAdapter {
   }
 
   async play(): Promise<void> {
+    // 立即更新内部状态，使事件触发时 getPaused() 返回正确值
+    this._paused = false;
     // 透传 play() 的 rejection（自动播放策略，TECH-SPEC §2.4）
     await this.art?.play();
   }
 
   pause(): void {
+    this._paused = true;
     this.art?.pause();
   }
 
@@ -77,7 +82,14 @@ export class LocalFileAdapter implements PlaybackAdapter {
   }
 
   getPaused(): boolean {
-    return (this.art as unknown as { paused: boolean } | null)?.paused ?? true;
+    // 优先返回内部缓存（解决 art.play() 异步导致的状态滞后）
+    // 如果 art 存在且状态矛盾，以 art 为准（远端施加的操作会更新 art）
+    const artPaused = (this.art as unknown as { paused: boolean } | null)?.paused;
+    if (artPaused !== undefined && artPaused !== this._paused) {
+      // art 状态更新时同步内部缓存
+      this._paused = artPaused;
+    }
+    return this._paused;
   }
 
   getRate(): number {

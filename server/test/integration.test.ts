@@ -4,17 +4,26 @@ import type { FastifyInstance } from 'fastify';
 import type { AddressInfo } from 'node:net';
 import { buildApp } from '../src/app.js';
 
-/** 测试客户端：收集消息，支持按类型等待 */
+let clientCounter = 0;
+
+/** 测试客户端：收集消息，支持按类型等待，自动发送 session:hello */
 class TestClient {
   ws: WebSocket;
   messages: Record<string, unknown>[] = [];
+  sessionId: string;
+  userId: string | null = null;
   private waiters: Array<{ type: string; resolve: (m: Record<string, unknown>) => void }> = [];
 
-  constructor(port: number) {
+  constructor(port: number, sessionId?: string) {
+    this.sessionId = sessionId ?? `test-${++clientCounter}-${Date.now()}`;
     this.ws = new WebSocket(`ws://localhost:${port}/ws`);
     this.ws.on('message', (raw) => {
       const msg = JSON.parse(raw.toString());
       this.messages.push(msg);
+      // 记录 userId
+      if (msg.type === 'connected' && msg.data) {
+        this.userId = (msg.data as { userId: string }).userId;
+      }
       const idx = this.waiters.findIndex(w => w.type === msg.type);
       if (idx >= 0) {
         const [w] = this.waiters.splice(idx, 1);
@@ -23,18 +32,17 @@ class TestClient {
     });
   }
 
-  /** 等待指定类型的消息（含已收到的） */
   waitFor(type: string, timeoutMs = 3000): Promise<Record<string, unknown>> {
     const existing = this.messages.find(m => m.type === type);
     if (existing) return Promise.resolve(existing);
-
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error(`等待消息超时: ${type}`)), timeoutMs);
-      this.waiters.push({
-        type,
-        resolve: (m) => { clearTimeout(timer); resolve(m); },
-      });
+      this.waiters.push({ type, resolve: (m: Record<string, unknown>) => { clearTimeout(timer); resolve(m); } });
     });
+  }
+
+  send(msg: Record<string, unknown>) {
+    this.ws.send(JSON.stringify(msg));
   }
 
   /** 确认在指定时间内没有收到某类型消息 */
@@ -49,13 +57,12 @@ class TestClient {
     });
   }
 
-  send(msg: Record<string, unknown>) {
-    this.ws.send(JSON.stringify(msg));
-  }
-
-  open(): Promise<void> {
-    if (this.ws.readyState === WebSocket.OPEN) return Promise.resolve();
-    return new Promise((resolve) => this.ws.on('open', resolve));
+  async open(): Promise<void> {
+    if (this.ws.readyState === WebSocket.OPEN) return;
+    await new Promise<void>((resolve) => this.ws.on('open', resolve));
+    // 发送 session:hello
+    this.send({ type: 'session:hello', data: { sessionId: this.sessionId } });
+    await this.waitFor('connected');
   }
 
   close() {
@@ -63,7 +70,7 @@ class TestClient {
   }
 }
 
-describe('信令服务器集成测试（完整用户流程）', () => {
+describe('信令服务器集成测试（完整用户流程 + session 重连）', () => {
   let app: FastifyInstance;
   let port: number;
 
@@ -79,30 +86,25 @@ describe('信令服务器集成测试（完整用户流程）', () => {
   });
 
   it('完整流程：A创建 → B加入 → 文件验证 → 同步消息转发', async () => {
-    // A 连接并创建房间
-    const a = new TestClient(port);
+    const a = new TestClient(port, 'user-a');
     await a.open();
-    await a.waitFor('connected');
+
     a.send({ type: 'room:create', data: {} });
     const created = await a.waitFor('room:created');
     const roomCode = (created.data as { roomCode: string }).roomCode;
     expect(roomCode).toMatch(/^\d{4}$/);
 
-    // B 连接并加入
-    const b = new TestClient(port);
+    const b = new TestClient(port, 'user-b');
     await b.open();
-    await b.waitFor('connected');
+
     b.send({ type: 'room:join', data: { roomCode } });
 
-    // B 收到 room:joined，角色是 guest，peerCount=1（A在房间里）
     const joined = await b.waitFor('room:joined');
     expect((joined.data as { role: string }).role).toBe('guest');
     expect((joined.data as { peerCount: number }).peerCount).toBe(1);
 
-    // A 收到 peer-joined 通知
     await a.waitFor('room:peer-joined');
 
-    // 双方提交文件信息 → 都收到 file:match
     a.send({ type: 'file:info', data: { name: 'movie.mkv', size: 1000 } });
     b.send({ type: 'file:info', data: { name: 'movie.mkv', size: 1000 } });
     const matchA = await a.waitFor('file:match');
@@ -110,12 +112,10 @@ describe('信令服务器集成测试（完整用户流程）', () => {
     expect((matchA.data as { matched: boolean }).matched).toBe(true);
     expect((matchB.data as { matched: boolean }).matched).toBe(true);
 
-    // A 发同步消息 → 只有 B 收到
     a.send({ type: 'sync:play', data: { time: 12.5, timestamp: Date.now() } });
     const play = await b.waitFor('sync:play');
     expect((play.data as { time: number }).time).toBe(12.5);
 
-    // B 关闭 → A 收到 room:left
     b.close();
     await a.waitFor('room:left');
 
@@ -123,39 +123,34 @@ describe('信令服务器集成测试（完整用户流程）', () => {
   });
 
   it('Bug回归：房主重复 join 自己的房间，角色保持 host，且不广播 peer-joined', async () => {
-    const a = new TestClient(port);
+    const a = new TestClient(port, 'user-a-rj');
     await a.open();
-    await a.waitFor('connected');
+
     a.send({ type: 'room:create', data: {} });
     const created = await a.waitFor('room:created');
     const roomCode = (created.data as { roomCode: string }).roomCode;
 
-    // 房主 join 自己的房间（模拟之前 RoomPage 的错误行为）
     a.send({ type: 'room:join', data: { roomCode } });
     const rejoined = await a.waitFor('room:joined');
 
-    // 关键断言：角色必须还是 host，peerCount=0（没有别人）
     expect((rejoined.data as { role: string }).role).toBe('host');
     expect((rejoined.data as { peerCount: number }).peerCount).toBe(0);
     expect((rejoined.data as { rejoin: boolean }).rejoin).toBe(true);
 
-    // 且不应收到 peer-joined（之前的 bug 表现）
     await a.expectNo('room:peer-joined');
 
     a.close();
   });
 
   it('文件不匹配：返回 matched=false 和差异信息', async () => {
-    const a = new TestClient(port);
+    const a = new TestClient(port, 'user-a-fm');
     await a.open();
-    await a.waitFor('connected');
     a.send({ type: 'room:create', data: {} });
     const created = await a.waitFor('room:created');
     const roomCode = (created.data as { roomCode: string }).roomCode;
 
-    const b = new TestClient(port);
+    const b = new TestClient(port, 'user-b-fm');
     await b.open();
-    await b.waitFor('connected');
     b.send({ type: 'room:join', data: { roomCode } });
     await b.waitFor('room:joined');
 
@@ -171,9 +166,8 @@ describe('信令服务器集成测试（完整用户流程）', () => {
   });
 
   it('加入不存在的房间：返回 ROOM_NOT_FOUND', async () => {
-    const c = new TestClient(port);
+    const c = new TestClient(port, 'user-c-nf');
     await c.open();
-    await c.waitFor('connected');
     c.send({ type: 'room:join', data: { roomCode: '0000' } });
     const err = await c.waitFor('error');
     expect((err.data as { code: string }).code).toBe('ROOM_NOT_FOUND');
@@ -181,28 +175,55 @@ describe('信令服务器集成测试（完整用户流程）', () => {
   });
 
   it('房间满员：第三人加入被拒绝', async () => {
-    const a = new TestClient(port);
+    const a = new TestClient(port, 'user-a-full');
     await a.open();
-    await a.waitFor('connected');
     a.send({ type: 'room:create', data: {} });
     const created = await a.waitFor('room:created');
     const roomCode = (created.data as { roomCode: string }).roomCode;
 
-    const b = new TestClient(port);
+    const b = new TestClient(port, 'user-b-full');
     await b.open();
-    await b.waitFor('connected');
     b.send({ type: 'room:join', data: { roomCode } });
     await b.waitFor('room:joined');
 
-    const c = new TestClient(port);
+    const c = new TestClient(port, 'user-c-full');
     await c.open();
-    await c.waitFor('connected');
     c.send({ type: 'room:join', data: { roomCode } });
     const err = await c.waitFor('error');
     expect((err.data as { code: string }).code).toBe('ROOM_NOT_FOUND');
 
     a.close();
     b.close();
+    c.close();
+  });
+
+  it('安全加固：无效 roomCode 被拒绝', async () => {
+    const c = new TestClient(port, 'user-badcode');
+    await c.open();
+    c.send({ type: 'room:join', data: { roomCode: 'abc' } });
+    const err = await c.waitFor('error');
+    expect((err.data as { code: string }).code).toBe('INVALID_ROOM');
+    c.close();
+  });
+
+  it('安全加固：未 hello 直接发其他消息被拒绝', async () => {
+    const ws = new WebSocket(`ws://localhost:${port}/ws`);
+    await new Promise<void>((resolve) => ws.on('open', resolve));
+    ws.send(JSON.stringify({ type: 'room:create', data: {} }));
+    const err = await new Promise<Record<string, unknown>>((resolve) => {
+      ws.on('message', (raw) => resolve(JSON.parse(raw.toString())));
+    });
+    expect((err.data as { code: string }).code).toBe('AUTH_REQUIRED');
+    ws.close();
+  });
+
+  it('安全加固：超大消息被拒绝', async () => {
+    const c = new TestClient(port, 'user-big');
+    await c.open();
+    // 发送超过 4KB 的消息
+    c.ws.send(JSON.stringify({ type: 'sync:play', data: { time: 0, pad: 'x'.repeat(5000) } }));
+    const err = await c.waitFor('error');
+    expect((err.data as { code: string }).code).toBe('INVALID_SIZE');
     c.close();
   });
 });

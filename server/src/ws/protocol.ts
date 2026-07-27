@@ -7,6 +7,25 @@ export interface WsMessage {
   data?: Record<string, unknown>;
 }
 
+// 会话恢复（TECH-SPEC §3）
+export interface SessionHelloMsg extends WsMessage {
+  type: 'session:hello';
+  data: { sessionId: string };
+}
+
+export interface SessionRestoredMsg extends WsMessage {
+  type: 'session:restored';
+  data: {
+    sessionId: string;
+    roomCode: string;
+    role: 'host' | 'guest';
+    roomState: string;
+    peerOnline: boolean;
+    fileName?: string;
+    fileSize?: number;
+  };
+}
+
 // 房间相关
 export interface RoomCreateMsg extends WsMessage {
   type: 'room:create';
