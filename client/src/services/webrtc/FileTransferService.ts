@@ -143,7 +143,10 @@ export class FileTransferService {
     let completed = false;
 
     this.peer.on('data', (d: Uint8Array) => {
-      const buf = d.buffer.slice(d.byteOffset, d.byteOffset + d.byteLength);
+      // new Uint8Array(view) 按视图逻辑长度拷贝出独立 ArrayBuffer：
+      // 1) 规避 TS5.7+ 把 view.buffer 收窄成 ArrayBuffer|SharedArrayBuffer 的类型错误
+      // 2) simple-peer 可能复用底层 buffer，拷贝可避免累积（chunks.push）时数据被覆盖
+      const buf: ArrayBuffer = new Uint8Array(d).buffer;
       received += buf.byteLength;
       if (streaming) cb.onChunk!(buf);
       else chunks.push(buf);

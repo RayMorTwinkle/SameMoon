@@ -12,7 +12,9 @@
  * 后台持续接收 + append，PlayerPage 只把 objectUrl 交给 <video>。
  */
 
-import MP4Box from 'mp4box';
+// mp4box 的 ESM 构建只有具名导出（createFile/ISOFile/...），无 default 导出；
+// dev 模式(esbuild)会伪造 default，生产打包器(rolldown)不会 → 必须用具名导入
+import { createFile } from 'mp4box';
 import { debugStore } from '../debugStore';
 
 /** 带 mp4box 队列标记的 SourceBuffer */
@@ -23,7 +25,7 @@ export class MseStreamController {
   readonly objectUrl: string;
 
   private readonly useMp4box: boolean;
-  private mp4box: ReturnType<typeof MP4Box.createFile> | null = null;
+  private mp4box: ReturnType<typeof createFile> | null = null;
   private mp4info: { tracks: Array<{ id: number; type: string; codec: string }> } | null = null;
   private sourceOpen = false;
   private setupDone = false;
@@ -54,7 +56,7 @@ export class MseStreamController {
     }, { once: true });
 
     if (this.useMp4box) {
-      this.mp4box = MP4Box.createFile();
+      this.mp4box = createFile();
       this.mp4box.onError = (e: unknown) => debugStore.logError('mse', 'mp4box-error', String(e));
       this.mp4box.onReady = (info: typeof this.mp4info) => { this.mp4info = info; this.trySetupMp4(); };
       this.mp4box.onSegment = (_id: number, sb: QueuedSourceBuffer, buffer: ArrayBuffer) => {
