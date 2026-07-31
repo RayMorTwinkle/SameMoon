@@ -37,6 +37,7 @@ export class MseStreamController {
 
   private ended = false;
   private pendingEnd = false;
+  private appendCount = 0;
 
   /** 该文件能否流式播放（MSE 容器限制） */
   static canStream(name: string, type: string): boolean {
@@ -46,11 +47,13 @@ export class MseStreamController {
   constructor(fileName: string, mimeType: string) {
     const isWebm = /webm/i.test(mimeType) || /\.webm$/i.test(fileName);
     this.useMp4box = !isWebm;
+    debugStore.log('mse', 'controller-create', { fileName, mimeType, useMp4box: this.useMp4box });
 
     this.mediaSource = new MediaSource();
     this.objectUrl = URL.createObjectURL(this.mediaSource);
     this.mediaSource.addEventListener('sourceopen', () => {
       this.sourceOpen = true;
+      debugStore.log('mse', 'sourceopen', { useMp4box: this.useMp4box });
       if (this.useMp4box) this.trySetupMp4();
       else this.setupWebm();
     }, { once: true });
@@ -68,6 +71,8 @@ export class MseStreamController {
 
   /** 接收到一块原始文件字节 */
   append(chunk: ArrayBuffer): void {
+    this.appendCount += 1;
+    if (this.appendCount === 1) debugStore.log('mse', 'first-chunk', { bytes: chunk.byteLength });
     if (this.useMp4box) {
       if (!this.mp4box) return;
       // mp4box 需要每块标注在原文件中的字节偏移
@@ -104,26 +109,39 @@ export class MseStreamController {
   private pendingWebm: ArrayBuffer[] = [];
 
   private setupWebm(): void {
+    // 优先用不带 codecs 的 'video/webm'：让浏览器从容器自嗅探实际编码，
+    // 避免硬猜 codec 串与真实内容不符导致解码失败（webm 流式连不上的常见根因）。
+    // 若浏览器拒绝无 codecs 的类型，再依次回退到常见组合。
     const candidates = [
+      'video/webm',
       'video/webm; codecs="vp9,opus"',
       'video/webm; codecs="vp8,vorbis"',
-      'video/webm',
+      'video/webm; codecs="vp9,vorbis"',
+      'video/webm; codecs="vp8,opus"',
+      'video/webm; codecs="av01.0.05M.08,opus"',
     ];
-    this.webmMime = candidates.find(m => MediaSource.isTypeSupported(m)) ?? '';
-    if (!this.webmMime) {
-      debugStore.logError('mse', 'webm-unsupported', 'MediaSource 不支持该 WebM 编码');
+    let sb: QueuedSourceBuffer | null = null;
+    for (const m of candidates) {
+      if (!MediaSource.isTypeSupported(m)) continue;
+      try {
+        sb = this.mediaSource.addSourceBuffer(m) as QueuedSourceBuffer;
+        this.webmMime = m;
+        break;
+      } catch (e) {
+        debugStore.log('mse', 'webm-addsb-skip', { mime: m, err: String(e) });
+      }
+    }
+    if (!sb) {
+      debugStore.logError('mse', 'webm-unsupported', '浏览器无法为该 WebM 创建 SourceBuffer');
       return;
     }
-    try {
-      const sb = this.mediaSource.addSourceBuffer(this.webmMime) as QueuedSourceBuffer;
-      sb.__queue = this.pendingWebm;
-      this.pendingWebm = [];
-      sb.addEventListener('updateend', () => this.flushSb(sb));
-      this.webmSb = sb;
-      this.flushSb(sb);
-    } catch (e) {
-      debugStore.logError('mse', 'webm-sb-failed', String(e));
-    }
+    debugStore.log('mse', 'webm-setup', { mime: this.webmMime });
+    sb.__queue = this.pendingWebm;
+    this.pendingWebm = [];
+    sb.addEventListener('updateend', () => this.flushSb(sb!));
+    sb.addEventListener('error', () => debugStore.logError('mse', 'webm-sb-error', 'SourceBuffer error 事件（编码可能不匹配）'));
+    this.webmSb = sb;
+    this.flushSb(sb);
   }
 
   private trySetupMp4(): void {
@@ -140,6 +158,7 @@ export class MseStreamController {
       const sb = this.mediaSource.addSourceBuffer(mime) as QueuedSourceBuffer;
       sb.__queue = [];
       sb.addEventListener('updateend', () => this.flushSb(sb));
+      sb.addEventListener('error', () => debugStore.logError('mse', 'mp4-sb-error', mime));
       this.mp4box.setSegmentOptions(track.id, sb, { nbSamples: 200 });
     }
 

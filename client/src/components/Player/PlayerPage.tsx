@@ -11,7 +11,7 @@ import { screenShareStore } from '../../services/webrtc/screenShareStore';
 import { fileTransferStore } from '../../services/webrtc/fileTransferStore';
 import { debugStore } from '../../services/debugStore';
 import { ConnectionStats } from '../common/ConnectionStats';
-import { Play, Wifi, WifiOff, Gauge, Monitor, Maximize } from 'lucide-react';
+import { Play, Wifi, WifiOff, Gauge, Monitor, Maximize, Download } from 'lucide-react';
 
 type Phase = 'loading' | 'ready-prompt' | 'syncing' | 'missing-file' | 'viewing';
 type SyncStatus = 'synced' | 'drifting' | 'buffering';
@@ -24,6 +24,7 @@ export function PlayerPage() {
   const location = useLocation();
   const navState = (location.state as { mode?: string } | null) ?? null;
   const isScreenShare = navState?.mode === 'screen-share';
+  const isFileComplete = navState?.mode === 'file-complete';
   const { status, send, userId } = useWebSocket();
 
   const [phase, setPhase] = useState<Phase>('loading');
@@ -74,6 +75,10 @@ export function PlayerPage() {
       const adapter = new LocalFileAdapter(containerRef.current);
       adapterRef.current = adapter;
       adapter.on('ratechange', () => setCurrentRate(adapter.getRate()));
+      adapter.on('error', (d) => {
+        debugStore.logError('player', 'video-error(stream)', JSON.stringify(d ?? {}));
+        Notification.error({ message: '流式播放失败', description: '该视频编码可能不支持流式，请改用完整传输' });
+      });
       adapter.load({ kind: 'object-url', url: controller.objectUrl }).then(() => {
         setPhase('ready-prompt');
       }).catch(() => {
@@ -100,6 +105,9 @@ export function PlayerPage() {
     // 监听倍速变化同步 UI 状态（包括远端触发的倍速）
     adapter.on('ratechange', () => {
       setCurrentRate(adapter.getRate());
+    });
+    adapter.on('error', (d) => {
+      debugStore.logError('player', 'video-error', JSON.stringify(d ?? {}));
     });
 
     adapter.load({ kind: 'local-file', file }).then(() => {
@@ -267,6 +275,20 @@ export function PlayerPage() {
     }
   };
 
+  // 保存收到的完整文件到本地（完整传输接收方）
+  const handleSave = () => {
+    const file = getSharedFile();
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = file.name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  };
+
   // 倍速切换（SyncEngine 监听 ratechange 自动广播）
   const handleRateChange = (rate: number) => {
     adapterRef.current?.setRate(rate);
@@ -310,6 +332,16 @@ export function PlayerPage() {
           className="w-full aspect-video bg-black rounded-xl overflow-hidden"
         />
       </div>
+
+      {/* 完整传输接收方：保存到本地 */}
+      {isFileComplete && (
+        <div className="w-full max-w-3xl mt-2 flex justify-end">
+          <Button size="small" type="default" onClick={handleSave}>
+            <Download size={14} className="mr-1 inline" />
+            保存到本地
+          </Button>
+        </div>
+      )}
 
       {/* 准备/同步控制区 */}
       <div className="w-full max-w-3xl mt-4">

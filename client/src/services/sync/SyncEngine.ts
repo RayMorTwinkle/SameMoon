@@ -63,6 +63,12 @@ export class SyncEngine {
   // 引擎自身发起的变速标志（防止追赶变速被误判为用户操作并广播，Fix P1-4）
   private internalRateChange = false;
 
+  // 远端节点 id（从心跳获知）：用于确定 leader/follower，避免双方同时漂移校正互相拉扯
+  private peerId: string | null = null;
+
+  // seek 相关阈值
+  private static readonly SEEK_MIN_DELTA = 0.5;  // 与目标差值小于此值不 seek（打断回声 ping-pong）
+  private static readonly SEEK_ECHO_MS = 1500;   // seek 后的回声抑制窗口（覆盖异步 seeked/waiting/canplay）
   private static readonly BUFFERING_TIMEOUT_MS = 30_000;
 
   constructor(opts: SyncEngineOptions) {
@@ -150,7 +156,7 @@ export class SyncEngine {
           this.bufferingTimer = null;
         }
         const time = (data as { time: number }).time;
-        this.setApplyingRemote();
+        this.setApplyingRemote(SyncEngine.SEEK_ECHO_MS);
         this.adapter.seek(time);
         this.adapter.play().catch(() => {});
         this.onEvent?.('synced');
@@ -181,6 +187,7 @@ export class SyncEngine {
     this.transport.send({
       type: 'sync:heartbeat',
       data: {
+        senderId: this.userId,               // 用于 leader/follower 判定
         clientTime: this.clockSync.rawNow(),  // t0（原始时钟，Fix P1-5）
         time: this.adapter.getTime(),
         paused: this.adapter.getPaused(),
@@ -262,7 +269,6 @@ export class SyncEngine {
   /** §1.3 施加远端状态（带回声抑制） */
   private applyRemote(state: PlaybackState): void {
     this.seq = Math.max(this.seq, state.seq);
-    this.setApplyingRemote();
 
     // 补偿传输延迟（§1.3 末尾）：时间戳约定见 ClockSync.rawNow()。
     // 时钟未校准时不补偿（时钟偏差可能远大于传输延迟本身）
@@ -273,7 +279,13 @@ export class SyncEngine {
       ? state.time
       : state.time + elapsed * state.rate;
 
-    this.adapter.seek(targetTime);
+    // 只有偏差显著才 seek：否则"远端 seek→本地 seek→seeked 事件被当作本地操作回 broadcast"
+    // 会无限 ping-pong（反复纠正对方进度、最终拖垮连接的元凶）。已很接近就只对齐状态不 seek。
+    const needSeek = Math.abs(this.adapter.getTime() - targetTime) > SyncEngine.SEEK_MIN_DELTA;
+    // seek 异步触发 seeked/waiting/canplay，回声窗口必须足够长以覆盖它们
+    this.setApplyingRemote(needSeek ? SyncEngine.SEEK_ECHO_MS : this.echoWindow);
+
+    if (needSeek) this.adapter.seek(targetTime);
     this.adapter.setRate(state.rate);
 
     if (state.paused) {
@@ -284,12 +296,12 @@ export class SyncEngine {
   }
 
   /** 设置回声抑制窗口 */
-  private setApplyingRemote(): void {
+  private setApplyingRemote(ms: number = this.echoWindow): void {
     this.applyingRemote = true;
     if (this.echoTimer) this.timerClock.clearTimeout(this.echoTimer);
     this.echoTimer = this.timerClock.setTimeout(() => {
       this.applyingRemote = false;
-    }, this.echoWindow);
+    }, ms);
   }
 
   /** §1.4 漂移校正（三档）：心跳始终发送（时钟校准需要样本），
@@ -304,6 +316,9 @@ export class SyncEngine {
    * 收到有 echoOf 的心跳 = 响应：计算时钟偏移 + 用对方状态做漂移校正
    */
   private handleHeartbeat(data: Record<string, unknown>): void {
+    if (this.peerId === null && typeof data.senderId === 'string') {
+      this.peerId = data.senderId;
+    }
     const remoteTime = data.time as number | undefined;
     const remotePaused = data.paused as boolean | undefined;
 
@@ -314,6 +329,7 @@ export class SyncEngine {
       this.transport.send({
         type: 'sync:heartbeat',
         data: {
+          senderId: this.userId,
           echoOf: t0,          // 回显对方 t0
           t1,                  // 我收到时刻
           clientTime: this.clockSync.rawNow(), // t2（我发送时刻，原始时钟）
@@ -349,6 +365,9 @@ export class SyncEngine {
    * @param remoteSentAt 对方发送心跳时的统一时间
    */
   applyDriftCorrection(remoteTime: number, remotePaused: boolean, remoteSentAt: number): void {
+    // 仅 follower（userId 较大方）做漂移校正，leader 作为基准不自我调整，
+    // 避免双方同时校正互相拉扯（rate 抖动 / 校正震荡）
+    if (this.peerId && this.userId < this.peerId) return;
     if (this.adapter.getPaused() || remotePaused) return;
 
     const elapsed = (this.clockSync.now() - remoteSentAt) / 1000;
@@ -379,7 +398,7 @@ export class SyncEngine {
 
     // >2s 直接 seek（§1.4 大档）
     this.chasing = false;
-    this.setApplyingRemote();
+    this.setApplyingRemote(SyncEngine.SEEK_ECHO_MS);
     this.setRateInternal(1);
     this.adapter.seek(expectedRemoteTime);
     this.onEvent?.('drifting', { drift, seeked: true });

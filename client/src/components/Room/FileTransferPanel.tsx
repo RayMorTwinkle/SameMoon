@@ -46,8 +46,9 @@ export function FileTransferPanel({ role, peerJoined, code }: Props) {
   const goPlay = (mode: TransferMode) => {
     if (navigatedRef.current) return;
     navigatedRef.current = true;
-    if (mode === 'stream') navigate(`/room/${code}/play`, { state: { mode: 'file-stream' } });
-    else navigate(`/room/${code}/play`);
+    navigate(`/room/${code}/play`, {
+      state: { mode: mode === 'stream' ? 'file-stream' : 'file-complete' },
+    });
   };
 
   // ─── 房主：选文件 + 发送 ──────────────────────────────
@@ -188,8 +189,8 @@ export function FileTransferPanel({ role, peerJoined, code }: Props) {
         </div>
         <ProgressBar />
         <p className="text-[10px] opacity-40">
-          {transferMode === 'stream' || incoming?.transferMode === 'stream'
-            ? '流式传输：缓存一点即可开始播放，正在进入播放页…'
+          {(role === 'host' ? transferMode : incoming?.transferMode) === 'stream'
+            ? '流式传输：缓存一点即可边下边看，正在进入播放页…'
             : '完整传输：接收完成后自动进入播放'}
         </p>
       </div>

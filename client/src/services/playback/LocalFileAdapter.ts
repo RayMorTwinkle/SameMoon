@@ -55,7 +55,12 @@ export class LocalFileAdapter implements PlaybackAdapter {
     this.art.on('video:ratechange', () => this.emit('ratechange'));
     this.art.on('video:waiting', () => this.emit('waiting'));
     this.art.on('video:canplay', () => this.emit('canplay'));
-    this.art.on('video:error', () => this.emit('error'));
+    this.art.on('video:error', () => {
+      // 捕获真实的 MediaError（code 4=源不支持/编码不支持，3=解码失败），供诊断日志定位
+      const v = (this.art as unknown as { video?: HTMLVideoElement })?.video;
+      const err = v?.error;
+      this.emit('error', err ? { code: err.code, message: err.message } : undefined);
+    });
     this.art.on('video:ended', () => this.emit('ended'));
   }
 
