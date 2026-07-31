@@ -16,6 +16,11 @@ function App() {
       </Routes>
       <DebugPanel />
       <DebugExport />
+      <div
+        style={{ position: 'fixed', left: 6, bottom: 4, fontSize: 10, opacity: 0.35, zIndex: 40, pointerEvents: 'none', color: '#725d42' }}
+      >
+        v{__APP_VERSION__}
+      </div>
     </ErrorBoundary>
   );
 }

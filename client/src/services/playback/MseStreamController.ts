@@ -78,7 +78,11 @@ export class MseStreamController {
       // mp4box 需要每块标注在原文件中的字节偏移
       (chunk as ArrayBuffer & { fileStart: number }).fileStart = this.fileStart;
       this.fileStart += chunk.byteLength;
-      this.mp4box.appendBuffer(chunk);
+      try {
+        this.mp4box.appendBuffer(chunk);
+      } catch (e) {
+        debugStore.logError('mse', 'mp4-append-failed', (e as Error).message);
+      }
       // 注意：flush() 只在 complete() 时调用一次；每块都 flush 会打断分段管线
     } else {
       this.webmSb?.__queue.push(chunk) ?? this.pendingWebm.push(chunk);
@@ -148,28 +152,36 @@ export class MseStreamController {
     if (this.setupDone || !this.sourceOpen || !this.mp4info || !this.mp4box) return;
     this.setupDone = true;
 
-    for (const track of this.mp4info.tracks) {
-      const kind = track.type === 'audio' ? 'audio' : 'video';
-      const mime = `${kind}/mp4; codecs="${track.codec}"`;
-      if (!MediaSource.isTypeSupported(mime)) {
-        debugStore.logError('mse', 'codec-unsupported', mime);
-        continue;
+    try {
+      for (const track of this.mp4info.tracks) {
+        // 按 codec 家族判定音/视频（不依赖 track.type，mp4box 各版本字段不一）
+        const codec = String((track as { codec?: string }).codec ?? '').toLowerCase();
+        const isAudio = /mp4a|opus|ac-3|ec-3|alac|flac|vorbis/.test(codec);
+        const kind = isAudio ? 'audio' : 'video';
+        const mime = `${kind}/mp4; codecs="${track.codec}"`;
+        if (!MediaSource.isTypeSupported(mime)) {
+          debugStore.logError('mse', 'codec-unsupported', mime);
+          continue;
+        }
+        const sb = this.mediaSource.addSourceBuffer(mime) as QueuedSourceBuffer;
+        sb.__queue = [];
+        sb.addEventListener('updateend', () => this.flushSb(sb));
+        sb.addEventListener('error', () => debugStore.logError('mse', 'mp4-sb-error', mime));
+        this.mp4box.setSegmentOptions(track.id, sb, { nbSamples: 200 });
       }
-      const sb = this.mediaSource.addSourceBuffer(mime) as QueuedSourceBuffer;
-      sb.__queue = [];
-      sb.addEventListener('updateend', () => this.flushSb(sb));
-      sb.addEventListener('error', () => debugStore.logError('mse', 'mp4-sb-error', mime));
-      this.mp4box.setSegmentOptions(track.id, sb, { nbSamples: 200 });
-    }
 
-    const initSegs = this.mp4box.initializeSegmentation();
-    for (const seg of initSegs) {
-      const sb = seg.user as QueuedSourceBuffer;
-      sb.__queue.push(seg.buffer);
-      this.flushSb(sb);
+      const initSegs = this.mp4box.initializeSegmentation();
+      for (const seg of initSegs) {
+        const sb = seg.user as QueuedSourceBuffer;
+        sb.__queue.push(seg.buffer);
+        this.flushSb(sb);
+      }
+      this.mp4box.start();
+      debugStore.log('mse', 'mp4-setup', `${this.mp4info.tracks.length} tracks`);
+    } catch (e) {
+      // mp4box API/格式异常兜底：绝不让未捕获错误崩溃整个播放页（旧版 e is not iterable 崩页根因）
+      debugStore.logError('mse', 'mp4-setup-failed', (e as Error).message);
     }
-    this.mp4box.start();
-    debugStore.log('mse', 'mp4-setup', `${this.mp4info.tracks.length} tracks`);
   }
 
   private flushSb(sb: QueuedSourceBuffer): void {
