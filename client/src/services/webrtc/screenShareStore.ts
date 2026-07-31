@@ -1,8 +1,9 @@
 /**
  * 屏幕分享全局状态 — 跨 RoomPage / PlayerPage 共享
+ * 基于 simple-peer：Peer.Instance 替代手动 RTCPeerConnection
  */
 
-import type { PeerConnectionManager } from './PeerConnectionManager';
+import type Peer from 'simple-peer';
 import type { PCStatsCollector } from './PCStatsCollector';
 
 interface ScreenShareState {
@@ -10,8 +11,8 @@ interface ScreenShareState {
   localStream: MediaStream | null;
   /** 远端屏幕流（观看方） */
   remoteStream: MediaStream | null;
-  /** PeerConnectionManager 实例 */
-  pcm: PeerConnectionManager | null;
+  /** simple-peer Peer 实例 */
+  peer: Peer.Instance | null;
   /** 统计采集器 */
   collector: PCStatsCollector | null;
   /** 是否正在分享 */
@@ -23,7 +24,7 @@ interface ScreenShareState {
 const state: ScreenShareState = {
   localStream: null,
   remoteStream: null,
-  pcm: null,
+  peer: null,
   collector: null,
   isSharing: false,
   isViewing: false,
@@ -32,25 +33,25 @@ const state: ScreenShareState = {
 export const screenShareStore = {
   get state() { return state; },
 
-  setSharing(stream: MediaStream, pcm: PeerConnectionManager, collector: PCStatsCollector) {
+  setSharing(stream: MediaStream, peer: Peer.Instance, collector: PCStatsCollector) {
     state.localStream = stream;
-    state.pcm = pcm;
+    state.peer = peer;
     state.collector = collector;
     state.isSharing = true;
     state.isViewing = false;
   },
 
-  setViewing(stream: MediaStream, pcm: PeerConnectionManager, collector: PCStatsCollector) {
+  setViewing(stream: MediaStream, peer: Peer.Instance, collector: PCStatsCollector) {
     state.remoteStream = stream;
-    state.pcm = pcm;
+    state.peer = peer;
     state.collector = collector;
     state.isViewing = true;
     state.isSharing = false;
   },
 
-  /** PCM 创建后立即注册（不等 track），让 RoomPage 能转发 ICE 候选 */
-  setPendingPCM(pcm: PeerConnectionManager) {
-    state.pcm = pcm;
+  /** Peer 创建后立即注册，让 RoomPage 能转发后续 signal */
+  setPendingPeer(peer: Peer.Instance) {
+    state.peer = peer;
   },
 
   /** 获取当前活跃的流（分享端拿 localStream，观看端拿 remoteStream） */
@@ -67,8 +68,8 @@ export const screenShareStore = {
     state.localStream = null;
     state.remoteStream = null;
     state.collector?.stop();
-    state.pcm?.close();
-    state.pcm = null;
+    (state.peer as any)?.destroy?.();
+    state.peer = null;
     state.collector = null;
     state.isSharing = false;
     state.isViewing = false;

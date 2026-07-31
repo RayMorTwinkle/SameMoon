@@ -1,4 +1,5 @@
 import { createContext, useContext, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { debugStore } from '../services/debugStore';
 
 export type WsStatus = 'connecting' | 'connected' | 'disconnected' | 'reconnecting';
 
@@ -79,6 +80,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
 
     ws.onopen = () => {
       if (disposedRef.current) { ws.close(); return; }
+      debugStore.log('ws', 'open', { retries: retriesRef.current });
       ws.send(JSON.stringify({
         type: 'session:hello',
         data: { sessionId: sessionIdRef.current },
@@ -96,6 +98,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
       if (disposedRef.current) return;
       try {
         const msg = JSON.parse(event.data);
+        debugStore.logWs('recv', msg.type, msg.data);
 
         // 新会话确认
         if (msg.type === 'connected' && msg.data?.userId) {
@@ -131,6 +134,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
       if (pingTimerRef.current) { clearInterval(pingTimerRef.current); pingTimerRef.current = null; }
       wsRef.current = null;
       setStatus('disconnected');
+      debugStore.log('ws', 'close', { nextRetry: retriesRef.current + 1 });
 
       // 无限重试：前几次快速重试，之后 30s 间隔（适应浏览器后台休眠）
       const delay = retriesRef.current < 5
@@ -174,7 +178,11 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
 
   const send = useCallback((msg: Record<string, unknown>) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
+      debugStore.logWs('send', msg.type as string, msg.data);
       wsRef.current.send(JSON.stringify(msg));
+    } else {
+      // 连接未就绪时消息会被静默丢弃——记入诊断日志（疑难杂症常见根源）
+      debugStore.logError('ws', 'send-dropped', `连接未就绪(state=${wsRef.current?.readyState ?? 'null'})，丢弃: ${msg.type}`);
     }
   }, []);
 

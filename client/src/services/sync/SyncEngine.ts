@@ -13,7 +13,7 @@ export interface PlaybackState {
   rate: number;
   seq: number;
   senderId: string;
-  sentAt: number; // 校准后统一时间（ms）
+  sentAt: number; // 发送方原始时钟（ms）；接收方用校准后 now()（≈对方原始时钟）比较
 }
 
 export interface SyncTransport {
@@ -60,6 +60,8 @@ export class SyncEngine {
 
   // 变速追赶状态
   private chasing = false;
+  // 引擎自身发起的变速标志（防止追赶变速被误判为用户操作并广播，Fix P1-4）
+  private internalRateChange = false;
 
   private static readonly BUFFERING_TIMEOUT_MS = 30_000;
 
@@ -179,7 +181,7 @@ export class SyncEngine {
     this.transport.send({
       type: 'sync:heartbeat',
       data: {
-        clientTime: this.clockSync.now(),  // t0
+        clientTime: this.clockSync.rawNow(),  // t0（原始时钟，Fix P1-5）
         time: this.adapter.getTime(),
         paused: this.adapter.getPaused(),
         rate: this.adapter.getRate(),
@@ -198,7 +200,7 @@ export class SyncEngine {
       rate: this.adapter.getRate(),
       seq: this.seq,
       senderId: this.userId,
-      sentAt: this.clockSync.now(),
+      sentAt: this.clockSync.rawNow(),
     };
   }
 
@@ -210,18 +212,28 @@ export class SyncEngine {
       rate: this.adapter.getRate(),
       seq: this.seq,
       senderId: this.userId,
-      sentAt: this.clockSync.now(),
+      sentAt: this.clockSync.rawNow(),
     };
   }
 
   private onLocalEvent(type: string): void {
     if (this.applyingRemote) return; // 回声抑制（§1.3）
+    // 引擎自身变速触发的 ratechange 不广播，也不打断追赶（Fix P1-4）
+    if (type === 'sync:rate' && this.internalRateChange) return;
     if (this.chasing) {
       // 变速追赶期间用户手动操作 → 放弃追赶
       this.chasing = false;
-      this.adapter.setRate(1);
+      this.setRateInternal(1);
     }
     this.transport.send({ type, data: this.captureState() });
+  }
+
+  /** 引擎内部变速：抑制随之而来的 ratechange 本地事件（Fix P1-4） */
+  private setRateInternal(rate: number): void {
+    if (this.adapter.getRate() === rate) return;
+    this.internalRateChange = true;
+    this.adapter.setRate(rate);
+    this.timerClock.setTimeout(() => { this.internalRateChange = false; }, this.echoWindow);
   }
 
   private onBuffering(): void {
@@ -252,8 +264,11 @@ export class SyncEngine {
     this.seq = Math.max(this.seq, state.seq);
     this.setApplyingRemote();
 
-    // 补偿传输延迟（§1.3 末尾）
-    const elapsed = (this.clockSync.now() - state.sentAt) / 1000;
+    // 补偿传输延迟（§1.3 末尾）：时间戳约定见 ClockSync.rawNow()。
+    // 时钟未校准时不补偿（时钟偏差可能远大于传输延迟本身）
+    const elapsed = this.clockSync.isReady
+      ? Math.max(0, (this.clockSync.now() - state.sentAt) / 1000)
+      : 0;
     const targetTime = state.paused
       ? state.time
       : state.time + elapsed * state.rate;
@@ -277,9 +292,9 @@ export class SyncEngine {
     }, this.echoWindow);
   }
 
-  /** §1.4 漂移校正（三档） */
+  /** §1.4 漂移校正（三档）：心跳始终发送（时钟校准需要样本），
+   *  漂移校正在 applyDriftCorrection 内部自行跳过暂停状态 */
   private checkDrift(): void {
-    if (this.adapter.getPaused()) return;
     this.sendHeartbeat();
   }
 
@@ -294,14 +309,14 @@ export class SyncEngine {
 
     if (data.echoOf === undefined) {
       // 这是请求：记录 t1，回复带 echo
-      const t1 = this.clockSync.now();
+      const t1 = this.clockSync.rawNow();
       const t0 = data.clientTime as number;
       this.transport.send({
         type: 'sync:heartbeat',
         data: {
           echoOf: t0,          // 回显对方 t0
           t1,                  // 我收到时刻
-          clientTime: this.clockSync.now(), // t2（我发送时刻）
+          clientTime: this.clockSync.rawNow(), // t2（我发送时刻，原始时钟）
           time: this.adapter.getTime(),
           paused: this.adapter.getPaused(),
           rate: this.adapter.getRate(),
@@ -317,7 +332,7 @@ export class SyncEngine {
       const t0 = data.echoOf as number;
       const t1 = data.t1 as number;
       const t2 = data.clientTime as number;
-      const t3 = this.clockSync.now();
+      const t3 = this.clockSync.rawNow();
       this.clockSync.addSample(t0, t1, t2, t3);
       // 用对方状态做漂移校正（Fix N1：时钟未校准时跳过，避免误触发）
       if (this.clockSync.isReady
@@ -347,7 +362,7 @@ export class SyncEngine {
       // 忽略
       if (this.chasing) {
         this.chasing = false;
-        this.adapter.setRate(1);
+        this.setRateInternal(1);
       }
       this.onEvent?.('synced');
       return;
@@ -357,17 +372,17 @@ export class SyncEngine {
       // 变速追赶（§1.4 中档）
       this.chasing = true;
       // 本地落后（drift < 0）→ 加速；本地领先（drift > 0）→ 减速
-      this.adapter.setRate(drift < 0 ? 1.05 : 0.95);
-      this.onEvent?.('drifting');
+      this.setRateInternal(drift < 0 ? 1.05 : 0.95);
+      this.onEvent?.('drifting', { drift });
       return;
     }
 
     // >2s 直接 seek（§1.4 大档）
     this.chasing = false;
-    this.adapter.setRate(1);
     this.setApplyingRemote();
+    this.setRateInternal(1);
     this.adapter.seek(expectedRemoteTime);
-    this.onEvent?.('drifting');
+    this.onEvent?.('drifting', { drift, seeked: true });
   }
 
   /** §1.6 缓冲超时：通知 UI 解除同步锁，让本地独立播放 */

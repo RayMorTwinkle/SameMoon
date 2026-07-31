@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Button, Card, Title, Notification } from 'animal-island-ui';
 import { useWebSocket, useWsMessage } from '../../hooks/useWebSocket';
@@ -7,9 +7,9 @@ import { formatFileSize } from '../../utils/formatFileSize';
 import { setSharedFile } from '../../services/room/fileStore';
 import { debugStore } from '../../services/debugStore';
 import { Link, UserPlus, FileVideo, CheckCircle, XCircle, Clock, Home, ArrowLeft, RefreshCw, Monitor, Upload, StopCircle } from 'lucide-react';
-import { ScreenShareService, type ScreenShareState } from '../../services/webrtc/ScreenShare';
+import { ScreenShareService, QUALITY_LABELS, type QualityPreset, type ScreenShareState } from '../../services/webrtc/ScreenShare';
 import { screenShareStore } from '../../services/webrtc/screenShareStore';
-import type { SignalingAdapter } from '../../services/webrtc/PeerConnectionManager';
+import { ConnectionStats } from '../common/ConnectionStats';
 
 type PeerStatus = 'waiting' | 'joined';
 type FileMatchStatus = 'idle' | 'sent' | 'matched' | 'mismatched';
@@ -26,6 +26,16 @@ interface RoomNavState {
   peerCount?: number;
   mode?: RoomMode;
 }
+
+// 屏幕采集能力检测：手机浏览器（Android Edge/Chrome/iOS Safari）均未实现 getDisplayMedia，
+// 按钮点了没反应就是因为调用直接抛异常——平台限制，与 HTTPS/flags 无关
+const canShareScreen = typeof navigator.mediaDevices?.getDisplayMedia === 'function';
+
+// 胶囊按钮样式（画质/帧率/音质选择器复用）
+const chipCls = (active: boolean) =>
+  `px-2 py-0.5 text-xs rounded-full border transition-colors ${
+    active ? 'bg-[#19c8b9] text-white border-[#19c8b9]' : 'border-gray-200 text-gray-500 hover:border-[#19c8b9]'
+  }`;
 
 export function RoomPage() {
   const { code } = useParams<{ code: string }>();
@@ -54,14 +64,18 @@ export function RoomPage() {
   const [screenShareState, setScreenShareState] = useState<ScreenShareState>('idle');
   const [screenShareBusy, setScreenShareBusy] = useState(false);
   const screenRef = useRef<ScreenShareService | null>(null);
-  // ICE 缓冲：PCM 未就绪时暂存到达的 ICE 候选
-  const iceBufferRef = useRef<Array<{ candidate: string; sdpMid?: string; sdpMLineIndex?: number }>>([]);
+  // 分享中的质量调节状态（与 ScreenShare.ts 默认值一致）
+  const [videoQuality, setVideoQuality] = useState<QualityPreset>('balanced');
+  const [shareFps, setShareFps] = useState(30);
+  const [audioKbps, setAudioKbps] = useState(128);
 
   // 重连带出上次文件名（用于提示用户）
   const [restoreFileName, setRestoreFileName] = useState<string | null>(null);
   const [restoreFileSize, setRestoreFileSize] = useState<number | null>(null);
 
-  const handleMessage = useCallback((msg: Record<string, unknown>) => {
+  // 刻意不用 useCallback：useWsMessage 每次渲染更新 handlerRef，普通函数保证
+  // 闭包读到最新 roomMode 等 state（修复 stale closure 导致 rtc:signal 首个 offer 被丢弃）
+  const handleMessage = (msg: Record<string, unknown>) => {
     const data = msg.data as Record<string, unknown>;
 
     switch (msg.type) {
@@ -135,49 +149,53 @@ export function RoomPage() {
         setScreenShareBusy(false);
         break;
 
-      case 'rtc:offer': {
-        console.log('[SS-B] 收到 rtc:offer, roomMode =', roomMode, 'isSharer =', screenShareStore.isSharer());
-        if (roomMode === 'screen-share' && !screenShareStore.isSharer()) {
-          const sdp = (data as { sdp: string }).sdp;
-          console.log('[SS-B] SDP 长度:', sdp?.length, '字节');
-          handleIncomingShare(sdp);
+      case 'rtc:signal': {
+        // ★ 统一信令：simple-peer 的 signal 事件
+        const signalData = data;
+        const sigType = (signalData as { type?: string })?.type ?? 'candidate';
+        debugStore.log('rtc', 'signal-recv', sigType);
+
+        // 1) 优先交给本组件的服务（内部带缓冲队列：peer 未建好时 candidate 入队不丢失）
+        if (screenRef.current) {
+          screenRef.current.signal(signalData);
+          break;
         }
-        break;
-      }
-
-      case 'rtc:answer': {
-        const sdp = (data as { sdp: string }).sdp;
-        console.log('[SS-A] 收到 rtc:answer, SDP 长度:', sdp?.length);
-        screenShareStore.state.pcm?.receiveAnswer(sdp);
-        break;
-      }
-
-      case 'rtc:ice': {
-        const ice = data as { candidate: string; sdpMid?: string; sdpMLineIndex?: number };
-        const pcm = screenShareStore.state.pcm;
-        if (pcm) {
-          pcm.receiveIce(ice.candidate, ice.sdpMid, ice.sdpMLineIndex);
+        // 2) 页面刷新等场景：服务不在但 store 里有 peer
+        const existingPeer = screenShareStore.state.peer;
+        if (existingPeer) {
+          (existingPeer as any).signal(signalData);
+          break;
+        }
+        // 3) 仅 offer 才启动观看流程（WS 有序，offer 必先于 candidate 到达；
+        //    此前 candidate 也会误触发 handleIncomingShare，造成重复建 peer 的竞态——屏幕分享连不上的根因）
+        if (sigType === 'offer' && roomMode === 'screen-share' && !screenShareStore.isSharer()) {
+          console.log('[SS-B] 收到 offer, 启动 handleIncomingShare');
+          handleIncomingShare(signalData);
         } else {
-          console.log('[RTCP] ICE 缓冲 (PCM 未就绪), buffer 大小:', iceBufferRef.current.length + 1,
-                      'isSharer:', screenShareStore.isSharer(), 'isViewer:', screenShareStore.isViewer());
-          iceBufferRef.current.push(ice);
+          debugStore.logError('rtc', 'signal-dropped', `无 peer 可路由: ${sigType}`);
         }
         break;
       }
 
-      case 'error':
+      case 'error': {
+        const errCode = (data.code as string) ?? '';
+        debugStore.logError('room', 'server-error', `${errCode}: ${data.message}`);
+        if (errCode === 'ROOM_NOT_FOUND') {
+          setRoomClosed(true);
+          break;
+        }
         Notification.error({
           message: '出错了',
           description: (data.message as string) || '请稍后重试',
         });
-        if ((data.code as string) === 'ROOM_NOT_FOUND') {
-          setRoomClosed(true);
-        } else if ((data.code as string) !== 'ALREADY_IN_ROOM') {
+        // 仅明确的致命错误才离开房间（此前任何未知错误都会把用户踢回首页）
+        if (errCode === 'INVALID_ROOM' || errCode === 'SERVER_FULL') {
           navigate('/');
         }
         break;
+      }
     }
-  }, [navigate]);
+  };
 
   useWsMessage(handleMessage);
 
@@ -221,9 +239,12 @@ export function RoomPage() {
 
   const handleLeaveRoom = () => {
     if (window.confirm('确定要离开房间吗？')) {
-      // 清除 session 避免下次自动恢复
+      screenRef.current?.stop();
+      // 清除 session + 整页跳转：彻底销毁 WS 连接与内存状态。
+      // 此前用 navigate('/') 时 WS 仍持旧 sessionId、restoredData 仍在 Context 里，
+      // 导致回首页后又被 session:restored 弹回房间
       sessionStorage.removeItem('sm-session');
-      navigate('/');
+      window.location.href = '/';
     }
   };
 
@@ -253,12 +274,6 @@ export function RoomPage() {
 
   // ─── 屏幕分享 ────────────────────────────────────────
 
-  const buildSignalingAdapter = (): SignalingAdapter => ({
-    sendRtcOffer: (data) => send({ type: 'rtc:offer', data }),
-    sendRtcAnswer: (data) => send({ type: 'rtc:answer', data }),
-    sendRtcIce: (data) => send({ type: 'rtc:ice', data }),
-  });
-
   const handleShare = async () => {
     console.log('[SS-A] handleShare 开始');
     const svc = new ScreenShareService();
@@ -266,10 +281,10 @@ export function RoomPage() {
     svc.onStateChangeHandler(setScreenShareState);
     send({ type: 'screen:request', data: {} });
     console.log('[SS-A] screen:request 已发送');
-    const adapter = buildSignalingAdapter();
     try {
-      await svc.startSharing(adapter);
-      console.log('[SS-A] startSharing 完成，PCM 已存入 store:', !!screenShareStore.state.pcm);
+      await svc.startSharing((data) => send({ type: 'rtc:signal', data }));
+      console.log('[SS-A] startSharing 完成, peer 已存入 store:', !!screenShareStore.state.peer);
+      // ★ 分享方不跳转！保持在房间页显示"正在分享"
     } catch (err) {
       console.error('[SS-A] startSharing 失败:', err);
       Notification.error({ message: '分享失败', description: '请检查浏览器权限设置' });
@@ -284,23 +299,17 @@ export function RoomPage() {
     send({ type: 'screen:stop', data: {} });
   };
 
-  const handleIncomingShare = async (offerSdp: string) => {
+  const handleIncomingShare = async (signalData: unknown) => {
     console.log('[SS-B] handleIncomingShare 开始');
     const svc = new ScreenShareService();
     screenRef.current = svc;
     svc.onStateChangeHandler(setScreenShareState);
-    const adapter = buildSignalingAdapter();
     try {
-      await svc.startViewing(adapter, offerSdp);
+      await svc.startViewing(
+        (data) => send({ type: 'rtc:signal', data }),
+        signalData,
+      );
       console.log('[SS-B] startViewing 完成');
-      const pcm = screenShareStore.state.pcm;
-      if (pcm && iceBufferRef.current.length > 0) {
-        console.log('[SS-B] flush ICE buffer:', iceBufferRef.current.length, '条');
-        for (const ice of iceBufferRef.current) {
-          pcm.receiveIce(ice.candidate, ice.sdpMid, ice.sdpMLineIndex);
-        }
-        iceBufferRef.current = [];
-      }
       navigate(`/room/${code}/play`, { state: { mode: 'screen-share' } });
     } catch (err) {
       console.error('[SS-B] startViewing 失败:', err);
@@ -556,10 +565,40 @@ export function RoomPage() {
                   <span className="text-red-500">正在分享</span>
                 </div>
                 {screenShareStore.isSharer() && (
-                  <Button type="default" size="large" onClick={handleStopShare}
-                    icon={<StopCircle size={16} />}>
-                    停止分享
-                  </Button>
+                  <div className="space-y-2">
+                    <ConnectionStats />
+                    <div className="flex items-center gap-1 justify-center flex-wrap">
+                      <span className="text-[10px] opacity-40">画质</span>
+                      {(Object.keys(QUALITY_LABELS) as QualityPreset[]).map(p => (
+                        <button key={p} className={chipCls(videoQuality === p)}
+                          onClick={() => { setVideoQuality(p); void screenRef.current?.setVideoQuality(p); }}>
+                          {QUALITY_LABELS[p]}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-1 justify-center">
+                      <span className="text-[10px] opacity-40">帧率</span>
+                      {[15, 30, 60].map(f => (
+                        <button key={f} className={chipCls(shareFps === f)}
+                          onClick={() => { setShareFps(f); void screenRef.current?.setFrameRate(f); }}>
+                          {f}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-1 justify-center">
+                      <span className="text-[10px] opacity-40">音质</span>
+                      {[64, 128, 256].map(k => (
+                        <button key={k} className={chipCls(audioKbps === k)}
+                          onClick={() => { setAudioKbps(k); void screenRef.current?.setAudioBitrate(k * 1000); }}>
+                          {k}k
+                        </button>
+                      ))}
+                    </div>
+                    <Button type="default" size="large" onClick={handleStopShare}
+                      icon={<StopCircle size={16} />}>
+                      停止分享
+                    </Button>
+                  </div>
                 )}
                 {screenShareStore.isViewer() && (
                   <Button type="primary" size="large"
@@ -579,9 +618,16 @@ export function RoomPage() {
                     : '等待对方加入后即可开始'}
                 </p>
                 {peerJoined && !screenShareBusy && (
-                  <Button type="primary" size="large" onClick={handleShare}>
-                    分享我的屏幕
-                  </Button>
+                  canShareScreen ? (
+                    <Button type="primary" size="large" onClick={handleShare}>
+                      分享我的屏幕
+                    </Button>
+                  ) : (
+                    <p className="text-xs text-yellow-600 px-4">
+                      当前浏览器不支持屏幕采集（手机端 Edge/Chrome/Safari 均未开放此 API），
+                      只能观看对方分享。请用电脑端发起分享
+                    </p>
+                  )
                 )}
                 {screenShareBusy && (
                   <p className="text-xs text-yellow-600">对方正在分享，请先等待结束</p>
@@ -618,21 +664,13 @@ export function RoomPage() {
             {status === 'connected' ? '已连接' : status === 'reconnecting' ? '重连中…' : '连接中…'}
           </span>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            className="flex items-center gap-1 text-xs opacity-40 hover:opacity-70 transition-opacity"
-            onClick={handleLeaveRoom}
-          >
-            离开房间
-          </button>
-          <button
-            className="flex items-center gap-1 text-xs opacity-50 hover:opacity-80 transition-opacity"
-            onClick={() => navigate('/')}
-          >
-            <ArrowLeft size={12} />
-            返回首页
-          </button>
-        </div>
+        <button
+          className="flex items-center gap-1 text-xs opacity-50 hover:opacity-80 transition-opacity"
+          onClick={handleLeaveRoom}
+        >
+          <ArrowLeft size={12} />
+          离开房间
+        </button>
       </div>
     </div>
   );

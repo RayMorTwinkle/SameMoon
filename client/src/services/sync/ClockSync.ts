@@ -72,9 +72,19 @@ export class ClockSync implements Clock {
     return remoteTimestamp - this.getOffset();
   }
 
-  /** 获取当前校准后的"统一时间"（用于消息 sentAt 字段） */
+  /** 获取当前校准后的"统一时间"（≈对方原始时钟） */
   now(): number {
     return this.clock.now() + this.getOffset();
+  }
+
+  /**
+   * 原始本地时钟（不加 offset）。
+   * 协议约定：消息中的时间戳一律为发送方原始时钟，接收方用校准后 now()
+   * （≈对方原始时钟）与之比较。NTP 采样必须用原始时钟，避免校准结果
+   * 反馈进采样池造成 offset 振荡（Fix P1-5）。
+   */
+  rawNow(): number {
+    return this.clock.now();
   }
 
   setTimeout(cb: () => void, ms: number): ReturnType<typeof setTimeout> {

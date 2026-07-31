@@ -113,20 +113,10 @@ export interface ScreenStopMsg extends WsMessage {
   data: Record<string, never>;
 }
 
-// Stage 2: WebRTC 信令 (S→C→S 转发)
-export interface RtcOfferMsg extends WsMessage {
-  type: 'rtc:offer';
-  data: { sdp: string };
-}
-
-export interface RtcAnswerMsg extends WsMessage {
-  type: 'rtc:answer';
-  data: { sdp: string };
-}
-
-export interface RtcIceMsg extends WsMessage {
-  type: 'rtc:ice';
-  data: { candidate: string; sdpMid?: string; sdpMLineIndex?: number };
+// Stage 2: WebRTC 信令 (simple-peer 统一信令)
+export interface RtcSignalMsg extends WsMessage {
+  type: 'rtc:signal';
+  data: Record<string, unknown>;  // simple-peer signal data (JSON-serializable)
 }
 
 // 同步播放

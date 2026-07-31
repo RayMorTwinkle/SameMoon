@@ -1,0 +1,35 @@
+version: "3.8"
+services:
+  sm-client:
+    image: nginx:alpine
+    container_name: sm-client
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./client/dist:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - /etc/ssl/your-domain:/etc/ssl/certs:ro
+    depends_on:
+      - sm-server
+    restart: unless-stopped
+    networks:
+      - sm-net
+
+  sm-server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: sm-server
+    expose:
+      - "4000"
+    environment:
+      - NODE_ENV=production
+      - PORT=4000
+    restart: unless-stopped
+    networks:
+      - sm-net
+
+networks:
+  sm-net:
+    driver: bridge

@@ -1,42 +1,44 @@
 /**
- * PCStatsCollector — WebRTC 统计信息采集器
- * 每 2s 从 RTCPeerConnection.getStats() 拉取数据
+ * PCStatsCollector — WebRTC 统计信息采集器（simple-peer 适配）
+ * 每 2s 从 peer._pc.getStats() 拉取数据
  * 供 DebugPanel 实时展示
  */
 
-import type { PeerConnectionManager } from './PeerConnectionManager';
+import type Peer from 'simple-peer';
 import type {
   PCStatsSnapshot, CandidateInfo, SelectedPair, DataChannelInfo, TimelineEvent,
 } from './types';
 
 export class PCStatsCollector {
-  private pcm: PeerConnectionManager;
+  private peer: Peer.Instance;
   private interval: ReturnType<typeof setInterval> | null = null;
   private timeline: TimelineEvent[] = [];
   private onUpdate?: (snapshot: PCStatsSnapshot) => void;
-  private onTimelineUpdate?: (entry: TimelineEvent) => void;
 
   private static readonly POLL_MS = 2000;
   private static readonly MAX_TIMELINE = 50;
 
-  constructor(pcm: PeerConnectionManager) {
-    this.pcm = pcm;
+  // 码率差分基线
+  private lastBytesSent = 0;
+  private lastBytesReceived = 0;
+  private lastPollTs = 0;
 
-    // 监听 PeerConnectionManager 的时间线事件
-    pcm.setTimelineHandler((entry) => {
-      this.timeline.push(entry);
-      if (this.timeline.length > PCStatsCollector.MAX_TIMELINE) {
-        this.timeline.shift();
-      }
-      this.onTimelineUpdate?.(entry);
+  constructor(peer: Peer.Instance) {
+    this.peer = peer;
+
+    // 监听 peer 事件构建时间线
+    peer.on('connect', () => this.recordTimeline('dc-open', 'DataChannel connected'));
+    peer.on('close', () => this.recordTimeline('dc-close', 'DataChannel closed'));
+    peer.on('error', (err) => this.recordTimeline('error', `Peer error: ${err.message}`));
+    peer.on('iceStateChange', (state: string) => {
+      this.recordTimeline('ice-state', `ICE ${state}`);
     });
   }
 
   start(onUpdate: (snapshot: PCStatsSnapshot) => void): void {
     this.onUpdate = onUpdate;
     this.interval = setInterval(() => this.poll(), PCStatsCollector.POLL_MS);
-    // 立即执行一次
-    this.poll();
+    this.poll(); // 立即执行一次
   }
 
   stop(): void {
@@ -53,12 +55,17 @@ export class PCStatsCollector {
     }
   }
 
+  /** 获取底层 RTCPeerConnection（供外部使用） */
+  getPeerConnection(): RTCPeerConnection | null {
+    return (this.peer as any)._pc as RTCPeerConnection | null;
+  }
+
   // ─── 内部 ────────────────────────────────────────────
 
   private async poll(): Promise<void> {
-    const pc = this.pcm.getPeerConnection();
+    const pc = (this.peer as any)._pc as RTCPeerConnection | undefined;
     if (!pc) {
-      this.onUpdate?.(this.emptySnapshot(pc));
+      this.onUpdate?.(this.emptySnapshot(pc ?? null));
       return;
     }
 
@@ -125,7 +132,7 @@ export class PCStatsCollector {
                 },
                 nominated: r.nominated ?? false,
               };
-              currentRoundTripTime = (r.currentRoundTripTime ?? currentRoundTripTime) * 1000; // s→ms
+              currentRoundTripTime = (r.currentRoundTripTime ?? currentRoundTripTime) * 1000;
             }
             bytesSent += r.bytesSent ?? 0;
             bytesReceived += r.bytesReceived ?? 0;
@@ -137,21 +144,37 @@ export class PCStatsCollector {
         }
       }
 
-      // DataChannel 统计
       const dataChannels: DataChannelInfo[] = [];
-      for (const dc of this.pcm.getDataChannels()) {
+      // simple-peer 支持 _channel
+      const dc = (this.peer as any)._channel as RTCDataChannel | undefined;
+      if (dc) {
         dataChannels.push({
           label: dc.label,
           state: dc.readyState,
-          bytesSent: 0,   // DataChannel 字节在 candidate-pair 级别统计
+          bytesSent: 0,
           bytesReceived: 0,
           bufferedAmount: dc.bufferedAmount,
         });
       }
 
+      // 码率差分（Kbps）：真实收发速率，比 availableOutgoingBitrate 更能反映实际体验
+      const now = Date.now();
+      let sendBitrateKbps = 0;
+      let recvBitrateKbps = 0;
+      if (this.lastPollTs > 0) {
+        const dt = (now - this.lastPollTs) / 1000;
+        if (dt > 0.2) {
+          sendBitrateKbps = Math.max(0, Math.round(((bytesSent - this.lastBytesSent) * 8) / dt / 1000));
+          recvBitrateKbps = Math.max(0, Math.round(((bytesReceived - this.lastBytesReceived) * 8) / dt / 1000));
+        }
+      }
+      this.lastPollTs = now;
+      this.lastBytesSent = bytesSent;
+      this.lastBytesReceived = bytesReceived;
+
       this.onUpdate?.({
-        iceConnectionState: this.pcm.iceConnectionState,
-        iceGatheringState: this.pcm.iceGatheringState,
+        iceConnectionState: pc.iceConnectionState,
+        iceGatheringState: pc.iceGatheringState,
         localCandidates: this.dedupCandidates(localCandidates),
         remoteCandidates: this.dedupCandidates(remoteCandidates),
         selectedPair,
@@ -161,6 +184,8 @@ export class PCStatsCollector {
         packetsReceived,
         currentRoundTripTime: Math.round(currentRoundTripTime),
         availableOutgoingBitrate,
+        sendBitrateKbps,
+        recvBitrateKbps,
         dataChannels,
         timeline: [...this.timeline],
       });
@@ -182,12 +207,13 @@ export class PCStatsCollector {
       packetsReceived: 0,
       currentRoundTripTime: 0,
       availableOutgoingBitrate: 0,
+      sendBitrateKbps: 0,
+      recvBitrateKbps: 0,
       dataChannels: [],
       timeline: [...this.timeline],
     };
   }
 
-  /** 去重候选（同一地址+端口只保留优先级最高者） */
   private dedupCandidates(cands: CandidateInfo[]): CandidateInfo[] {
     const seen = new Map<string, CandidateInfo>();
     for (const c of cands) {

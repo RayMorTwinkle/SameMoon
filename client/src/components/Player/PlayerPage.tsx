@@ -8,7 +8,9 @@ import { WebrtcStreamAdapter } from '../../services/playback/WebrtcStreamAdapter
 import { ClockSync } from '../../services/sync/ClockSync';
 import { SyncEngine, type SyncEngineEvent } from '../../services/sync/SyncEngine';
 import { screenShareStore } from '../../services/webrtc/screenShareStore';
-import { Play, Wifi, WifiOff, Gauge, Monitor } from 'lucide-react';
+import { debugStore } from '../../services/debugStore';
+import { ConnectionStats } from '../common/ConnectionStats';
+import { Play, Wifi, WifiOff, Gauge, Monitor, Maximize } from 'lucide-react';
 
 type Phase = 'loading' | 'ready-prompt' | 'syncing' | 'missing-file' | 'viewing';
 type SyncStatus = 'synced' | 'drifting' | 'buffering';
@@ -35,6 +37,7 @@ export function PlayerPage() {
   const engineRef = useRef<SyncEngine | null>(null);
   const clockRef = useRef(new ClockSync());
   const syncStartedRef = useRef(false);
+  const selfReadyRef = useRef(false);
 
   // 初始化播放器
   useEffect(() => {
@@ -99,6 +102,7 @@ export function PlayerPage() {
       clockSync: clockRef.current,
       userId,
       onEvent: (evt: SyncEngineEvent) => {
+        debugStore.log('sync', 'engine-event', evt);
         switch (evt) {
           case 'buffering':
             setSyncStatus('buffering');
@@ -134,10 +138,27 @@ export function PlayerPage() {
     }
   }, [peerReady, phase, startSync]);
 
-  // 处理远端消息
-  const handleMessage = useCallback((msg: Record<string, unknown>) => {
+  // 处理远端消息（刻意不用 useCallback：useWsMessage 每次渲染更新 handlerRef，
+  // 普通函数保证闭包永远读到最新 state，避免 stale closure）
+  const handleMessage = (msg: Record<string, unknown>) => {
+    // 迟到的 WebRTC 信令：观看方的 stream 事件早于 ICE 完成就跳转到本页，
+    // 后续 candidate 必须继续喂给 peer，否则连接可能永远建立不起来（黑屏）
+    if (msg.type === 'rtc:signal') {
+      const peer = screenShareStore.state.peer as { signal: (d: unknown) => void; destroyed?: boolean } | null;
+      if (peer && !peer.destroyed) {
+        peer.signal(msg.data);
+      } else {
+        debugStore.log('rtc', 'signal-dropped-no-peer', (msg.data as { type?: string })?.type ?? 'candidate');
+      }
+      return;
+    }
+
     // sync:* 消息全部交给引擎处理（心跳双向握手已在引擎内部完成）
     if ((msg.type as string).startsWith('sync:')) {
+      if (!engineRef.current) {
+        // 引擎未启动时 sync 消息被丢弃——记入诊断日志（握手死锁的关键线索）
+        debugStore.log('sync', 'msg-dropped-no-engine', msg.type);
+      }
       engineRef.current?.handleRemoteMessage(msg);
       // 从消息中直接提取倍速同步 UI（避免依赖异步 ratechange 事件链）
       const data = msg.data as { rate?: number } | undefined;
@@ -150,6 +171,12 @@ export function PlayerPage() {
     // 对方点击"准备好了"
     if (msg.type === 'player:ready') {
       setPeerReady(true);
+      // Fix：幂等回执。若自己已就绪则回发一条（echo 标记防止无限往返），
+      // 解决"先进播放页一方的 ready 在对方挂载前发出而丢失"的握手死锁
+      const isEcho = (msg.data as { echo?: boolean } | undefined)?.echo === true;
+      if (selfReadyRef.current && !isEcho) {
+        send({ type: 'player:ready', data: { echo: true } });
+      }
     }
 
     // screen:stop → 对方停止分享
@@ -185,6 +212,7 @@ export function PlayerPage() {
       // 退回到准备阶段，双方重新点击"准备好了"
       setPhase('ready-prompt');
       setPeerReady(false);
+      selfReadyRef.current = false;
     }
 
     // 房间被销毁 → 提示并返回房间页
@@ -195,9 +223,22 @@ export function PlayerPage() {
       syncStartedRef.current = false;
       navigate(`/room/${code}`);
     }
-  }, [navigate, code]);
+  };
 
   useWsMessage(handleMessage);
+
+  // 全屏切换（屏幕分享观看）
+  const handleFullscreen = () => {
+    const el = containerRef.current;
+    if (!el) return;
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    } else {
+      el.requestFullscreen().catch(() => {
+        Notification.warning({ message: '全屏失败', description: '当前浏览器不支持全屏 API' });
+      });
+    }
+  };
 
   // 倍速切换（SyncEngine 监听 ratechange 自动广播）
   const handleRateChange = (rate: number) => {
@@ -222,6 +263,7 @@ export function PlayerPage() {
     }
 
     // 通知对方自己已就绪
+    selfReadyRef.current = true;
     send({ type: 'player:ready', data: {} });
 
     // 如果对方也已就绪 → 启动同步引擎
@@ -262,7 +304,7 @@ export function PlayerPage() {
 
         {phase === 'viewing' && (
           <Card color="app-green" className="text-center">
-            <div className="flex items-center justify-center gap-2 text-sm text-[#725d42] mb-1">
+            <div className="flex items-center justify-center gap-2 text-sm text-[#725d42] mb-2">
               <Monitor size={16} />
               {status === 'connected' ? (
                 <Wifi size={14} className="text-green-500" />
@@ -270,8 +312,15 @@ export function PlayerPage() {
                 <WifiOff size={14} className="text-yellow-500" />
               )}
               正在观看
+              <button
+                onClick={handleFullscreen}
+                title="全屏"
+                className="ml-2 p-1 rounded hover:bg-black/10 transition-colors"
+              >
+                <Maximize size={16} />
+              </button>
             </div>
-            <p className="text-xs opacity-40">实时屏幕分享（纯跟随模式）</p>
+            <ConnectionStats />
           </Card>
         )}
 

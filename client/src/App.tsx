@@ -4,6 +4,7 @@ import { RoomPage } from './components/Room/RoomPage';
 import { PlayerPage } from './components/Player/PlayerPage';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { DebugPanel } from './components/common/DebugPanel';
+import { DebugExport } from './components/common/DebugExport';
 
 function App() {
   return (
@@ -14,6 +15,7 @@ function App() {
         <Route path="/room/:code/play" element={<PlayerPage />} />
       </Routes>
       <DebugPanel />
+      <DebugExport />
     </ErrorBoundary>
   );
 }

@@ -45,7 +45,7 @@ export class FakeClock implements Clock {
   }
 
   clearTimeout(id: ReturnType<typeof setTimeout>): void {
-    this.timers = this.timers.filter(t => t.id !== id);
+    this.timers = this.timers.filter(t => t.id !== (id as unknown as number));
   }
 
   setInterval(cb: () => void, ms: number): ReturnType<typeof setInterval> {
@@ -61,7 +61,7 @@ export class FakeClock implements Clock {
   }
 
   clearInterval(id: ReturnType<typeof setInterval>): void {
-    this.timers = this.timers.filter(t => t.id !== id);
+    this.timers = this.timers.filter(t => t.id !== (id as unknown as number));
   }
 }
 

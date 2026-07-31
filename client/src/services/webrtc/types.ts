@@ -34,6 +34,10 @@ export interface PCStatsSnapshot {
   packetsReceived: number;
   currentRoundTripTime: number;
   availableOutgoingBitrate: number;
+  /** 实际发送码率（Kbps，poll 差分） */
+  sendBitrateKbps: number;
+  /** 实际接收码率（Kbps，poll 差分） */
+  recvBitrateKbps: number;
   dataChannels: DataChannelInfo[];
   timeline: TimelineEvent[];
 }

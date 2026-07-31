@@ -27,8 +27,8 @@ const FORWARD_WHITELIST = new Set([
   'sync:play', 'sync:pause', 'sync:seek', 'sync:rate',
   'sync:heartbeat', 'sync:state', 'sync:buffering', 'sync:ready',
   'player:ready', 'chat:message',
-  // WebRTC 信令
-  'rtc:offer', 'rtc:answer', 'rtc:ice',
+  // WebRTC 信令 (simple-peer)
+  'rtc:signal',
   // 文件传输协调
   'file:offer', 'file:accept', 'file:progress', 'file:complete', 'file:cancelled',
   // 屏幕分享协调
@@ -39,9 +39,8 @@ const FORWARD_WHITELIST = new Set([
 
 // 不需要 room 的消息类型（可在未加入房间时使用）
 const NO_ROOM_TYPES = new Set([
-  'rtc:offer', 'rtc:answer', 'rtc:ice',
+  'rtc:signal',
   'file:offer', 'file:accept', 'file:progress', 'file:complete', 'file:cancelled',
-  'ping',
 ]);
 
 /** 构建 Fastify 应用（导出以便测试） */
@@ -431,6 +430,13 @@ export async function buildApp(): Promise<FastifyInstance> {
             room: currentRoom,
             data: {},
           }, sessionId!);
+          break;
+        }
+
+        case 'ping': {
+          // 客户端 30s 保活（Fix：此前落入 default 被回以 UNKNOWN_TYPE 错误，
+          // 前端错误处理会把用户踢回首页——房间待满 30s 必被踢的元凶）
+          socket.send(JSON.stringify({ type: 'pong', data: {} }));
           break;
         }
 

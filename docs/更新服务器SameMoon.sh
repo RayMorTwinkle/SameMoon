@@ -14,7 +14,7 @@ log "1/4 本地构建前端..."
 cd "$PROJECT_DIR/client"
 npm run build
 DIST_SIZE=$(du -sh "$PROJECT_DIR/client/dist" | cut -f1)
-log "✅ 前端构建成功（$DIST_SIZE）"
+log "✅ 前端构建成功（${DIST_SIZE}）"
 
 # ── 2. 同步服务端源码到 ServerX 并上传 ─────────────────
 log "2/4 同步服务端源码和配置到服务器..."
