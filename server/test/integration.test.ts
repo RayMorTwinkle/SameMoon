@@ -313,21 +313,16 @@ describe('信令服务器集成测试（完整用户流程 + session 重连）',
     b.send({ type: 'room:join', data: { roomCode: code } });
     await b.waitFor('room:joined');
 
-    // A → offer → B
-    a.send({ type: 'rtc:offer', data: { sdp: 'v=0...' } });
-    const offer = await b.waitFor('rtc:offer');
+    // A → offer 信令 → B
+    a.send({ type: 'rtc:signal', data: { type: 'offer', sdp: 'v=0...' } });
+    const offer = await b.waitFor('rtc:signal');
     expect((offer.data as { sdp: string }).sdp).toBe('v=0...');
     expect(offer.from).toBe(a.userId);
 
-    // B → answer → A
-    b.send({ type: 'rtc:answer', data: { sdp: 'v=0...answer' } });
-    const answer = await a.waitFor('rtc:answer');
+    // B → answer 信令 → A
+    b.send({ type: 'rtc:signal', data: { type: 'answer', sdp: 'v=0...answer' } });
+    const answer = await a.waitFor('rtc:signal');
     expect((answer.data as { sdp: string }).sdp).toBe('v=0...answer');
-
-    // ICE candidates 转发
-    a.send({ type: 'rtc:ice', data: { candidate: 'candidate:1...' } });
-    const ice = await b.waitFor('rtc:ice');
-    expect((ice.data as { candidate: string }).candidate).toBe('candidate:1...');
 
     a.close();
     b.close();

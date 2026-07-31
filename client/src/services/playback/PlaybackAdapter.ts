@@ -17,6 +17,7 @@ export type AdapterEvent =
 export type PlaybackSource =
   | { kind: 'local-file'; file: File }
   | { kind: 'direct-url'; url: string }
+  | { kind: 'object-url'; url: string }   // 已有的 URL（如 MSE MediaSource），adapter 不负责创建/回收
   | { kind: 'webrtc-stream'; stream: MediaStream }
   | { kind: 'youtube'; videoId: string };
 

@@ -8,6 +8,7 @@ import { WebrtcStreamAdapter } from '../../services/playback/WebrtcStreamAdapter
 import { ClockSync } from '../../services/sync/ClockSync';
 import { SyncEngine, type SyncEngineEvent } from '../../services/sync/SyncEngine';
 import { screenShareStore } from '../../services/webrtc/screenShareStore';
+import { fileTransferStore } from '../../services/webrtc/fileTransferStore';
 import { debugStore } from '../../services/debugStore';
 import { ConnectionStats } from '../common/ConnectionStats';
 import { Play, Wifi, WifiOff, Gauge, Monitor, Maximize } from 'lucide-react';
@@ -61,6 +62,31 @@ export function PlayerPage() {
     }
 
     const file = getSharedFile();
+    const isFileStream = navState?.mode === 'file-stream';
+
+    // 流式接收方：无本地 File，用 MSE controller 的 objectUrl 播放（后台仍在持续接收）
+    if (isFileStream && !file) {
+      const controller = fileTransferStore.getController();
+      if (!controller || !containerRef.current) {
+        setPhase('missing-file');
+        return;
+      }
+      const adapter = new LocalFileAdapter(containerRef.current);
+      adapterRef.current = adapter;
+      adapter.on('ratechange', () => setCurrentRate(adapter.getRate()));
+      adapter.load({ kind: 'object-url', url: controller.objectUrl }).then(() => {
+        setPhase('ready-prompt');
+      }).catch(() => {
+        Notification.error({ message: '流加载失败', description: '请返回房间重试' });
+        navigate(`/room/${code}`);
+      });
+      return () => {
+        engineRef.current?.stop();
+        adapter.destroy();
+        fileTransferStore.reset();
+      };
+    }
+
     // Fix: 无文件时不立即 navigate（避免与 session:restored 竞态），
     // 改为展示友好提示，用户可手动返回
     if (!file || !containerRef.current) {
@@ -144,7 +170,8 @@ export function PlayerPage() {
     // 迟到的 WebRTC 信令：观看方的 stream 事件早于 ICE 完成就跳转到本页，
     // 后续 candidate 必须继续喂给 peer，否则连接可能永远建立不起来（黑屏）
     if (msg.type === 'rtc:signal') {
-      const peer = screenShareStore.state.peer as { signal: (d: unknown) => void; destroyed?: boolean } | null;
+      // 屏幕分享 / 文件流式传输共用信令转发（哪个 peer 存在就喂给谁）
+      const peer = (screenShareStore.state.peer ?? fileTransferStore.getPeer()) as { signal: (d: unknown) => void; destroyed?: boolean } | null;
       if (peer && !peer.destroyed) {
         peer.signal(msg.data);
       } else {
@@ -395,7 +422,7 @@ export function PlayerPage() {
                 <span className="opacity-60">
                   {syncStatus === 'synced' && '已同步'}
                   {syncStatus === 'drifting' && '校正中…'}
-                  {syncStatus === 'buffering' && '缓冲中…'}
+                  {syncStatus === 'buffering' && '对方缓冲中·已暂停'}
                 </span>
               </div>
               <span className="text-xs opacity-40">房间 {code}</span>

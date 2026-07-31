@@ -18,18 +18,24 @@ export class LocalFileAdapter implements PlaybackAdapter {
   }
 
   async load(source: PlaybackSource): Promise<void> {
-    if (source.kind !== 'local-file') {
-      throw new Error('LocalFileAdapter only supports local-file source');
-    }
-
     // 清理旧实例
     this.destroy();
 
-    this.objectUrl = URL.createObjectURL(source.file);
+    let url: string;
+    if (source.kind === 'local-file') {
+      this.objectUrl = URL.createObjectURL(source.file);
+      url = this.objectUrl;
+    } else if (source.kind === 'object-url') {
+      // 外部已创建的 URL（如 MSE MediaSource），本 adapter 不负责回收
+      url = source.url;
+      this.objectUrl = null;
+    } else {
+      throw new Error('LocalFileAdapter only supports local-file / object-url source');
+    }
 
     this.art = new Artplayer({
       container: this.container as string | HTMLDivElement,
-      url: this.objectUrl,
+      url,
       autoplay: false,
       autoSize: false,
       autoMini: true,

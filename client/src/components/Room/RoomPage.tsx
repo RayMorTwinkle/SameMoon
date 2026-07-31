@@ -6,10 +6,12 @@ import { isValidVideoFile, FORMAT_HINT } from '../../utils/fileValidator';
 import { formatFileSize } from '../../utils/formatFileSize';
 import { setSharedFile } from '../../services/room/fileStore';
 import { debugStore } from '../../services/debugStore';
-import { Link, UserPlus, FileVideo, CheckCircle, XCircle, Clock, Home, ArrowLeft, RefreshCw, Monitor, Upload, StopCircle } from 'lucide-react';
+import { Link, UserPlus, FileVideo, CheckCircle, XCircle, Clock, Home, ArrowLeft, RefreshCw, Monitor, StopCircle } from 'lucide-react';
 import { ScreenShareService, QUALITY_LABELS, type QualityPreset, type ScreenShareState } from '../../services/webrtc/ScreenShare';
 import { screenShareStore } from '../../services/webrtc/screenShareStore';
+import { fileTransferStore } from '../../services/webrtc/fileTransferStore';
 import { ConnectionStats } from '../common/ConnectionStats';
+import { FileTransferPanel } from './FileTransferPanel';
 
 type PeerStatus = 'waiting' | 'joined';
 type FileMatchStatus = 'idle' | 'sent' | 'matched' | 'mismatched';
@@ -150,6 +152,8 @@ export function RoomPage() {
         break;
 
       case 'rtc:signal': {
+        // file-transfer 模式由 FileTransferPanel 自己订阅处理，这里让位避免误路由
+        if (roomMode === 'file-transfer') break;
         // ★ 统一信令：simple-peer 的 signal 事件
         const signalData = data;
         const sigType = (signalData as { type?: string })?.type ?? 'candidate';
@@ -240,6 +244,7 @@ export function RoomPage() {
   const handleLeaveRoom = () => {
     if (window.confirm('确定要离开房间吗？')) {
       screenRef.current?.stop();
+      fileTransferStore.reset();
       // 清除 session + 整页跳转：彻底销毁 WS 连接与内存状态。
       // 此前用 navigate('/') 时 WS 仍持旧 sessionId、restoredData 仍在 Context 里，
       // 导致回首页后又被 session:restored 弹回房间
@@ -539,16 +544,9 @@ export function RoomPage() {
         </>
         )}
 
-        {/* ── file-transfer 模式（Step 3 实现） ── */}
+        {/* ── file-transfer 模式 ── */}
         {roomMode === 'file-transfer' && (
-          <div className="text-center py-6">
-            <Upload size={32} className="mx-auto text-[#c4b89e] mb-2" />
-            <p className="text-sm text-[#725d42] mb-1">文件传输模式</p>
-            <p className="text-xs opacity-50">
-              {role === 'host' ? '房主将选择一个文件传给对方' : '等待房主发送文件'}
-            </p>
-            <p className="text-[10px] opacity-30 mt-2">Step 3 实现</p>
-          </div>
+          <FileTransferPanel role={role} peerJoined={peerJoined} code={code ?? ''} />
         )}
 
         {/* ── screen-share 模式 ── */}

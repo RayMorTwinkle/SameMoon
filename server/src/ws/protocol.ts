@@ -69,7 +69,7 @@ export interface FileMatchMsg extends WsMessage {
 // Stage 2: 文件传输协调
 export interface FileOfferMsg extends WsMessage {
   type: 'file:offer';
-  data: { name: string; size: number; type: string };
+  data: { name: string; size: number; type: string; transferMode: 'complete' | 'stream' };
 }
 
 export interface FileAcceptMsg extends WsMessage {
