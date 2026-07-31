@@ -59,6 +59,19 @@ export const screenShareStore = {
     return state.localStream || state.remoteStream;
   },
 
+  /** 观看端设置抖动缓冲目标（ms）：越大越丝滑、延迟越高。设在所有 receiver 上保持 A/V 同步 */
+  setJitterBufferTarget(ms: number) {
+    const pc = (state.peer as any)?._pc as RTCPeerConnection | undefined;
+    if (!pc) return;
+    for (const r of pc.getReceivers()) {
+      const rr = r as unknown as { jitterBufferTarget?: number; playoutDelayHint?: number };
+      try {
+        if ('jitterBufferTarget' in rr) rr.jitterBufferTarget = ms;          // Chrome/Edge 114+（毫秒）
+        else if ('playoutDelayHint' in rr) rr.playoutDelayHint = ms / 1000;  // 旧版回退（秒）
+      } catch { /* ignore */ }
+    }
+  },
+
   /** 获取当前角色 */
   isSharer(): boolean { return state.isSharing; },
   isViewer(): boolean { return state.isViewing; },

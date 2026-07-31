@@ -7,7 +7,7 @@ import { formatFileSize } from '../../utils/formatFileSize';
 import { setSharedFile } from '../../services/room/fileStore';
 import { debugStore } from '../../services/debugStore';
 import { Link, UserPlus, FileVideo, CheckCircle, XCircle, Clock, Home, ArrowLeft, RefreshCw, Monitor, StopCircle } from 'lucide-react';
-import { ScreenShareService, QUALITY_LABELS, type QualityPreset, type ScreenShareState } from '../../services/webrtc/ScreenShare';
+import { ScreenShareService, QUALITY_LABELS, PRIORITY_LABELS, type QualityPreset, type PriorityMode, type ScreenShareState } from '../../services/webrtc/ScreenShare';
 import { screenShareStore } from '../../services/webrtc/screenShareStore';
 import { fileTransferStore } from '../../services/webrtc/fileTransferStore';
 import { ConnectionStats } from '../common/ConnectionStats';
@@ -70,6 +70,7 @@ export function RoomPage() {
   const [videoQuality, setVideoQuality] = useState<QualityPreset>('balanced');
   const [shareFps, setShareFps] = useState(30);
   const [audioKbps, setAudioKbps] = useState(128);
+  const [priorityMode, setPriorityMode] = useState<PriorityMode>('audio');
 
   // 重连带出上次文件名（用于提示用户）
   const [restoreFileName, setRestoreFileName] = useState<string | null>(null);
@@ -589,6 +590,15 @@ export function RoomPage() {
                         <button key={k} className={chipCls(audioKbps === k)}
                           onClick={() => { setAudioKbps(k); void screenRef.current?.setAudioBitrate(k * 1000); }}>
                           {k}k
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-1 justify-center flex-wrap">
+                      <span className="text-[10px] opacity-40">卡顿时</span>
+                      {(Object.keys(PRIORITY_LABELS) as PriorityMode[]).map(m => (
+                        <button key={m} className={chipCls(priorityMode === m)}
+                          onClick={() => { setPriorityMode(m); void screenRef.current?.setPriorityMode(m); }}>
+                          {PRIORITY_LABELS[m]}
                         </button>
                       ))}
                     </div>

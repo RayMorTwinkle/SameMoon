@@ -27,11 +27,28 @@ const QUALITY_PRESETS: Record<QualityPreset, { maxBitrate: number; height: numbe
   ultra:    { maxBitrate: 20_000_000, height: 2160, frameRate: 60 },
 };
 
+/** 卡顿时优先保留：保音频（视频自由降级）/ 保画面（降帧率保分辨率）/ 保帧率（降分辨率保流畅） */
+export type PriorityMode = 'audio' | 'resolution' | 'framerate';
+
+export const PRIORITY_LABELS: Record<PriorityMode, string> = {
+  audio: '保音频',
+  resolution: '保画面',
+  framerate: '保帧率',
+};
+
+// 各模式对应的视频降级偏好（音频在所有模式下都被标为高优先级，永不先降）
+const DEGRADATION: Record<PriorityMode, string> = {
+  audio: 'balanced',
+  resolution: 'maintain-resolution',
+  framerate: 'maintain-framerate',
+};
+
 export class ScreenShareService {
   private peer: Peer.Instance | null = null;
   private collector: PCStatsCollector | null = null;
   private localStream: MediaStream | null = null;
   private onStateChange?: (s: ScreenShareState) => void;
+  private priorityMode: PriorityMode = 'audio';
   /** peer 创建前到达的信令缓冲（修复 trickle ICE 竞态：offer 处理期间 candidate 不再丢失/误触发新 peer） */
   private pendingSignals: unknown[] = [];
 
@@ -100,6 +117,8 @@ export class ScreenShareService {
       // 连接建立后应用默认质量（浏览器默认码率上限仅 ~2.5Mbps 且爬升缓慢）
       void this.setVideoQuality('balanced');
       void this.setAudioBitrate(128_000);
+      // 音频默认高网络优先级：卡顿/带宽不足时优先保音频，不让音频先降（默认保音频模式）
+      void this.setAudioPriorityHigh();
     });
     (this.peer as any).on('iceStateChange', (ice: string, gathering: string) => {
       debugStore.log('rtc', 'ice-state', `sharer: ${ice} / gathering=${gathering}`);
@@ -217,8 +236,8 @@ export class ScreenShareService {
         params.encodings = [{}];
       }
       params.encodings[0].maxBitrate = cfg.maxBitrate;
-      // 电影画面优先保分辨率（模糊比掉帧更影响观感）
-      (params as { degradationPreference?: string }).degradationPreference = 'maintain-resolution';
+      // 按当前优先级模式决定视频降级方式（保音频=balanced / 保画面=maintain-resolution / 保帧率=maintain-framerate）
+      (params as { degradationPreference?: string }).degradationPreference = DEGRADATION[this.priorityMode];
       try {
         await sender.setParameters(params);
       } catch (e) {
@@ -254,6 +273,40 @@ export class ScreenShareService {
       debugStore.logError('rtc', 'set-audio-params-failed', (e as Error).message);
     }
     debugStore.log('rtc', 'audio-bitrate', bps);
+  }
+
+  /** 卡顿时优先级：设置视频降级偏好 + 始终保证音频高优先级 */
+  async setPriorityMode(mode: PriorityMode): Promise<void> {
+    this.priorityMode = mode;
+    const vsender = this.getSender('video');
+    if (vsender) {
+      const params = vsender.getParameters();
+      (params as { degradationPreference?: string }).degradationPreference = DEGRADATION[mode];
+      try {
+        await vsender.setParameters(params);
+      } catch (e) {
+        debugStore.logError('rtc', 'set-degradation-failed', (e as Error).message);
+      }
+    }
+    await this.setAudioPriorityHigh();
+    debugStore.log('rtc', 'priority-mode', mode);
+  }
+
+  /** 把音频 RTP 流标为高网络优先级：带宽紧张时优先保音频 */
+  private async setAudioPriorityHigh(): Promise<void> {
+    const sender = this.getSender('audio');
+    if (!sender) return;
+    const params = sender.getParameters();
+    if (!params.encodings || params.encodings.length === 0) {
+      params.encodings = [{}];
+    }
+    (params.encodings[0] as { networkPriority?: string; priority?: string }).networkPriority = 'high';
+    (params.encodings[0] as { networkPriority?: string; priority?: string }).priority = 'high';
+    try {
+      await sender.setParameters(params);
+    } catch (e) {
+      debugStore.logError('rtc', 'set-audio-priority-failed', (e as Error).message);
+    }
   }
 
   private getSender(kind: 'video' | 'audio'): RTCRtpSender | null {

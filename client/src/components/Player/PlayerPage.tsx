@@ -33,6 +33,7 @@ export function PlayerPage() {
   const [bufferingTimeout, setBufferingTimeout] = useState(false);
   const [peerDisconnected, setPeerDisconnected] = useState(false);
   const [currentRate, setCurrentRate] = useState<number>(1);
+  const [bufferMs, setBufferMs] = useState(0);  // 屏幕分享观看缓冲（jitterBufferTarget，毫秒）
 
   const containerRef = useRef<HTMLDivElement>(null);
   const adapterRef = useRef<LocalFileAdapter | null>(null);
@@ -380,6 +381,20 @@ export function PlayerPage() {
               </button>
             </div>
             <ConnectionStats />
+            <div className="flex items-center gap-1 justify-center flex-wrap mt-2">
+              <span className="text-[10px] opacity-40">缓冲</span>
+              {([['最低延迟', 0], ['流畅≈1s', 1000], ['更稳≈2s', 2000]] as [string, number][]).map(([label, ms]) => (
+                <button
+                  key={ms}
+                  onClick={() => { setBufferMs(ms); screenShareStore.setJitterBufferTarget(ms); }}
+                  className={`px-2 py-0.5 text-xs rounded-full border transition-colors ${
+                    bufferMs === ms ? 'bg-[#19c8b9] text-white border-[#19c8b9]' : 'border-gray-200 text-gray-500 hover:border-[#19c8b9]'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </Card>
         )}
 
