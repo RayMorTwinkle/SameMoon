@@ -33,11 +33,8 @@ interface RoomNavState {
 // 按钮点了没反应就是因为调用直接抛异常——平台限制，与 HTTPS/flags 无关
 const canShareScreen = typeof navigator.mediaDevices?.getDisplayMedia === 'function';
 
-// 胶囊按钮样式（画质/帧率/音质选择器复用）
-const chipCls = (active: boolean) =>
-  `px-2 py-0.5 text-xs rounded-full border transition-colors ${
-    active ? 'bg-[#19c8b9] text-white border-[#19c8b9]' : 'border-gray-200 text-gray-500 hover:border-[#19c8b9]'
-  }`;
+// 胶囊按钮样式（画质/帧率/音质/优先级选择器复用，animal 风格）
+const chipCls = (active: boolean) => `sm-chip ${active ? 'sm-chip--active' : ''}`;
 
 export function RoomPage() {
   const { code } = useParams<{ code: string }>();
@@ -392,7 +389,7 @@ export function RoomPage() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-6">
+    <div className="min-h-screen flex flex-col items-center justify-center p-6 sm-fade-up">
       <Title size="large" color="app-green">
         等待室
       </Title>

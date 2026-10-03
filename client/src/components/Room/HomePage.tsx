@@ -1,16 +1,43 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Button, Card, Title, Input, Notification } from 'animal-island-ui';
+import { Button, Title, Input, Notification } from 'animal-island-ui';
 import { useWebSocket, useWsMessage } from '../../hooks/useWebSocket';
-import { FileVideo, Monitor, Users } from 'lucide-react';
+import { FileVideo, Monitor, Users, Check } from 'lucide-react';
 
 type RoomMode = 'local-sync' | 'file-transfer' | 'screen-share';
 
-const MODE_OPTIONS: { mode: RoomMode; label: string; desc: string; icon: typeof Users }[] = [
-  { mode: 'local-sync', label: '本地同步', desc: '双方各自有同一文件，同步播放', icon: Users },
-  { mode: 'file-transfer', label: '文件传输', desc: '房主把视频传给你一起看', icon: FileVideo },
-  { mode: 'screen-share', label: '屏幕分享', desc: '实时分享屏幕内容给对方', icon: Monitor },
+const MODE_OPTIONS: { mode: RoomMode; label: string; desc: string; icon: typeof Users; color: string }[] = [
+  { mode: 'local-sync', label: '本地同步', desc: '双方各有同一部影片，进度同步播放', icon: Users, color: 'var(--sm-mode-local)' },
+  { mode: 'file-transfer', label: '文件传输', desc: '房主把影片发给 TA，一起观看', icon: FileVideo, color: 'var(--sm-mode-file)' },
+  { mode: 'screen-share', label: '屏幕分享', desc: '实时把你的屏幕画面分享给 TA', icon: Monitor, color: 'var(--sm-mode-screen)' },
 ];
+
+/** 手绘月亮标记：柔光 + 缓慢浮动 + 一颗薄荷星 */
+function MoonMark() {
+  return (
+    <div className="sm-float" aria-hidden>
+      <svg width="66" height="66" viewBox="0 0 66 66" fill="none">
+        <defs>
+          <radialGradient id="sm-moon-glow" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="#ffe9a8" stopOpacity="0.85" />
+            <stop offset="100%" stopColor="#ffe9a8" stopOpacity="0" />
+          </radialGradient>
+        </defs>
+        <circle cx="33" cy="33" r="30" fill="url(#sm-moon-glow)" />
+        <path
+          d="M42 15a19 19 0 1 0 9 25.5A15.5 15.5 0 0 1 42 15z"
+          fill="#f7cd67"
+          stroke="#e0b800"
+          strokeWidth="2.4"
+          strokeLinejoin="round"
+        />
+        <circle cx="31" cy="35" r="3" fill="#e8b94e" opacity="0.55" />
+        <circle cx="25" cy="27" r="2" fill="#e8b94e" opacity="0.45" />
+        <path d="M53 17l1.3 3.2 3.2 1.3-3.2 1.3L53 26l-1.3-3.2-3.2-1.3 3.2-1.3z" fill="#19c8b9" />
+      </svg>
+    </div>
+  );
+}
 
 export function HomePage() {
   const navigate = useNavigate();
@@ -95,99 +122,116 @@ export function HomePage() {
   };
 
   const connected = status === 'connected';
+  const statusLabel =
+    status === 'connected' ? '已连接' :
+    status === 'connecting' ? '连接中…' :
+    status === 'reconnecting' ? '重连中…' : '已断开';
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-6">
-      <Title size="large" color="app-green">
-        Same Moon
-      </Title>
-      <p className="mt-2 text-sm opacity-60">千里共婵娟 · 异地同步观影</p>
-
-      <Card color="app-blue" className="mt-8 max-w-sm w-full">
-        <div className="flex flex-col gap-4">
-          {/* 模式选择器 */}
-          <div className="space-y-2">
-            <p className="text-xs opacity-50">选择模式</p>
-            <div className="grid gap-2">
-              {MODE_OPTIONS.map(opt => {
-                const Icon = opt.icon;
-                const selected = mode === opt.mode;
-                return (
-                  <button
-                    key={opt.mode}
-                    className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-all text-left ${
-                      selected
-                        ? 'border-[#19c8b9] bg-[#f0faf9]'
-                        : 'border-gray-200 hover:border-gray-300'
-                    }`}
-                    onClick={() => setMode(opt.mode)}
-                  >
-                    <Icon size={20} className={selected ? 'text-[#19c8b9]' : 'text-gray-400'} />
-                    <div>
-                      <p className={`text-sm font-medium ${selected ? 'text-[#19c8b9]' : 'text-gray-600'}`}>
-                        {opt.label}
-                      </p>
-                      <p className="text-[10px] opacity-50">{opt.desc}</p>
-                    </div>
-                    {selected && (
-                      <div className="ml-auto w-4 h-4 rounded-full bg-[#19c8b9] flex items-center justify-center">
-                        <span className="text-white text-[10px] font-bold">✓</span>
-                      </div>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <Button
-            type="primary"
-            size="large"
-            block
-            disabled={!connected}
-            onClick={handleCreate}
-          >
-            创建房间
-          </Button>
-
-          <div className="flex items-center gap-2">
-            <div className="flex-1">
-              <Input
-                placeholder="输入4位房间号"
-                value={roomCode}
-                maxLength={4}
-                onChange={(e) => setRoomCode((e.target as HTMLInputElement).value.replace(/\D/g, ''))}
-              />
-            </div>
-            <Button
-              type="default"
-              disabled={!connected || roomCode.length !== 4}
-              onClick={handleJoin}
-            >
-              加入
-            </Button>
-          </div>
+    <div className="min-h-screen flex flex-col items-center px-5 py-10">
+      {/* 顶部标识 */}
+      <div className="sm-fade-up flex flex-col items-center">
+        <MoonMark />
+        <div className="mt-1">
+          <Title size="large" color="app-green">Same Moon</Title>
         </div>
-      </Card>
+        <p className="mt-2 text-sm font-medium sm-t-sec">和 TA 隔着屏幕，一起看</p>
+      </div>
+
+      {/* 主面板 */}
+      <div className="sm-panel sm-fade-up mt-7 w-full max-w-sm p-5" style={{ animationDelay: '70ms' }}>
+        {/* ① 创建 */}
+        <p className="text-sm font-bold sm-t">想和 TA 怎么看？</p>
+        <p className="text-xs sm-t-sec mt-0.5 mb-3">选一种方式，创建房间后把链接发给 TA</p>
+
+        <div className="grid gap-2.5">
+          {MODE_OPTIONS.map((opt, i) => {
+            const Icon = opt.icon;
+            const selected = mode === opt.mode;
+            return (
+              <button
+                key={opt.mode}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => setMode(opt.mode)}
+                className={`sm-mode-card sm-fade-up ${selected ? 'sm-mode-card--active' : ''}`}
+                style={{ animationDelay: `${120 + i * 70}ms` }}
+              >
+                <span className="sm-icon-badge" style={{ background: selected ? 'var(--sm-primary)' : opt.color }}>
+                  <Icon size={22} strokeWidth={2.4} />
+                </span>
+                <span className="flex-1 min-w-0">
+                  <span className="block text-sm font-bold sm-t">{opt.label}</span>
+                  <span className="block text-xs sm-t-sec mt-0.5 leading-snug">{opt.desc}</span>
+                </span>
+                {selected && (
+                  <span className="sm-check">
+                    <Check size={15} strokeWidth={3} />
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        <Button
+          type="primary"
+          size="large"
+          block
+          disabled={!connected}
+          onClick={handleCreate}
+          className="mt-5"
+        >
+          创建房间
+        </Button>
+
+        {/* 分隔：加入 */}
+        <div className="flex items-center gap-3 my-5">
+          <span className="flex-1 h-px" style={{ background: 'var(--sm-border)' }} />
+          <span className="text-xs sm-t-sec whitespace-nowrap">或加入 TA 的房间</span>
+          <span className="flex-1 h-px" style={{ background: 'var(--sm-border)' }} />
+        </div>
+
+        {/* ② 加入 */}
+        <div className="flex items-center gap-2">
+          <div className="flex-1">
+            <Input
+              placeholder="输入 4 位房间号"
+              value={roomCode}
+              maxLength={4}
+              inputMode="numeric"
+              onChange={(e) => setRoomCode((e.target as HTMLInputElement).value.replace(/\D/g, ''))}
+            />
+          </div>
+          <Button
+            type="default"
+            size="large"
+            disabled={!connected || roomCode.length !== 4}
+            onClick={handleJoin}
+          >
+            加入
+          </Button>
+        </div>
+      </div>
 
       {/* 连接状态 */}
-      <div className="mt-6 flex items-center gap-2 text-xs opacity-50">
-        <span
-          className={`inline-block w-2 h-2 rounded-full ${
-            connected ? 'bg-green-400' : 'bg-yellow-400 animate-pulse'
-          }`}
-        />
-        <span>
-          {status === 'connected' && '已连接'}
-          {status === 'connecting' && '连接中…'}
-          {status === 'reconnecting' && '重连中…'}
-          {status === 'disconnected' && '已断开'}
-        </span>
+      <div className="sm-fade-up mt-7" style={{ animationDelay: '360ms' }}>
+        <div className="sm-pill">
+          <span
+            className="sm-dot"
+            style={{
+              background: connected ? 'var(--sm-success)' : 'var(--sm-warning)',
+              animation: connected ? 'none' : 'sm-glow 1.2s infinite',
+            }}
+          />
+          <span>{statusLabel}</span>
+        </div>
       </div>
 
       {/* 重置连接入口 */}
       <button
-        className="mt-4 text-xs opacity-30 hover:opacity-60 transition-opacity underline"
+        className="mt-4 text-xs sm-t-muted hover:sm-t-body transition-opacity"
+        style={{ background: 'none', border: 'none', cursor: 'pointer' }}
         onClick={handleResetSession}
       >
         重置连接（清除旧会话）

@@ -325,7 +325,7 @@ export function PlayerPage() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center p-4 pt-6">
+    <div className="min-h-screen flex flex-col items-center p-4 pt-6 sm-fade-in">
       {/* 播放器容器 */}
       <div className="w-full max-w-3xl">
         <div
@@ -387,9 +387,7 @@ export function PlayerPage() {
                 <button
                   key={ms}
                   onClick={() => { setBufferMs(ms); screenShareStore.setJitterBufferTarget(ms); }}
-                  className={`px-2 py-0.5 text-xs rounded-full border transition-colors ${
-                    bufferMs === ms ? 'bg-[#19c8b9] text-white border-[#19c8b9]' : 'border-gray-200 text-gray-500 hover:border-[#19c8b9]'
-                  }`}
+                  className={`sm-chip ${bufferMs === ms ? 'sm-chip--active' : ''}`}
                 >
                   {label}
                 </button>
@@ -446,11 +444,7 @@ export function PlayerPage() {
                 <button
                   key={rate}
                   onClick={() => handleRateChange(rate)}
-                  className={`px-2 py-0.5 text-xs rounded-full border transition-colors ${
-                    currentRate === rate
-                      ? 'bg-[#19c8b9] text-white border-[#19c8b9]'
-                      : 'border-gray-200 text-gray-500 hover:border-[#19c8b9] hover:text-[#19c8b9]'
-                  }`}
+                  className={`sm-chip ${currentRate === rate ? 'sm-chip--active' : ''}`}
                 >
                   {rate}x
                 </button>

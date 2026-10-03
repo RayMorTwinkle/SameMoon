@@ -160,8 +160,8 @@ export function FileTransferPanel({ role, peerJoined, code }: Props) {
   // ─── 渲染 ────────────────────────────────────────────
   const ProgressBar = () => (
     <div className="space-y-1">
-      <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-        <div className="h-full bg-[#19c8b9] transition-all" style={{ width: `${pct}%` }} />
+      <div className="sm-progress-track">
+        <div className="sm-progress-fill" style={{ width: `${pct}%` }} />
       </div>
       <p className="text-xs opacity-60">
         {formatFileSize(progress.done)} / {formatFileSize(progress.total)} ({pct}%)
@@ -250,7 +250,7 @@ export function FileTransferPanel({ role, peerJoined, code }: Props) {
                 onClick={() => canStream && setTransferMode('stream')}
                 disabled={!canStream}
                 className={`w-full flex items-start gap-2 p-2.5 rounded-xl border-2 text-left transition-all ${
-                  transferMode === 'stream' ? 'border-[#19c8b9] bg-[#f0faf9]' : 'border-gray-200'
+                  transferMode === 'stream' ? 'border-[#19c8b9] bg-[#f0faf9]' : 'border-[#d8ccae]'
                 } ${!canStream ? 'opacity-40 cursor-not-allowed' : ''}`}
               >
                 <Zap size={18} className={transferMode === 'stream' ? 'text-[#19c8b9]' : 'text-gray-400'} />
@@ -264,7 +264,7 @@ export function FileTransferPanel({ role, peerJoined, code }: Props) {
               <button
                 onClick={() => setTransferMode('complete')}
                 className={`w-full flex items-start gap-2 p-2.5 rounded-xl border-2 text-left transition-all ${
-                  transferMode === 'complete' ? 'border-[#19c8b9] bg-[#f0faf9]' : 'border-gray-200'
+                  transferMode === 'complete' ? 'border-[#19c8b9] bg-[#f0faf9]' : 'border-[#d8ccae]'
                 }`}
               >
                 <Download size={18} className={transferMode === 'complete' ? 'text-[#19c8b9]' : 'text-gray-400'} />

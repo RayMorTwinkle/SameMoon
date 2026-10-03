@@ -2,7 +2,7 @@
 set -e
 echo "🚀 部署 SameMoon 到服务器..."
 
-SERVER="root@150.158.149.24"
+SERVER="root@122.51.139.252"
 REMOTE_DIR="~/app-configs/same-moon"
 
 echo "1/3 推送代码..."
@@ -24,4 +24,4 @@ ssh "$SERVER" << EOF
   docker compose logs --tail 10
 EOF
 
-echo "✅ 部署完成: http://150.158.149.24:4000"
+echo "✅ 部署完成: http://122.51.139.252:3000"

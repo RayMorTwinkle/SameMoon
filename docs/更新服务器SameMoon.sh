@@ -43,7 +43,7 @@ log "✅ 容器已重启"
 sleep 2
 STATUS=$(ssh "$SERVER" "curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/" 2>/dev/null || echo "000")
 if [ "$STATUS" = "200" ]; then
-  log "✅ 部署完成！访问: http://150.158.149.24:3000"
+  log "✅ 部署完成！访问: http://122.51.139.252:3000"
 else
   log "⚠️  HTTP 状态: $STATUS（nginx 可能尚未就绪，稍等重试）"
   log "查看日志: ssh $SERVER 'cd $REMOTE_DIR && sudo docker compose logs --tail 20'"

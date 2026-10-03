@@ -1,17 +1,200 @@
 @import "tailwindcss";
 
+/* ─────────────────────────────────────────────────────────
+   Same Moon 设计令牌（animal-island-ui 视觉语言）
+   暖色羊皮纸底 · 棕色文字 · 薄荷绿主色 · 黄色聚焦 · 圆角药丸 · 底部 3D 阴影
+   ───────────────────────────────────────────────────────── */
 :root {
+  --sm-font: 'Nunito', 'Noto Sans SC', 'Zen Maru Gothic', -apple-system, 'PingFang SC', sans-serif;
+
   --sm-primary: #19c8b9;
+  --sm-primary-hover: #3dd4c6;
+  --sm-primary-active: #11a89b;
+  --sm-primary-bg: #e6f9f6;
+  --sm-primary-shadow: #9fe0d8;
+
   --sm-text: #794f27;
   --sm-text-body: #725d42;
-  --sm-bg: #f8f8f0;
-  --sm-border: #c4b89e;
+  --sm-text-secondary: #9f927d;
+  --sm-text-muted: #b3a488;
+
+  --sm-bg: #f4f1e4;
+  --sm-bg-content: #fdfbef;
+  --sm-bg-sunk: #f0ece0;
+
+  --sm-border: #d8ccae;
+  --sm-border-strong: #b6a681;
+
+  --sm-shadow-btn: #bdaea0;
+  --sm-shadow-input: #d8cdb4;
+
+  --sm-focus-yellow: #ffcc00;
+  --sm-success: #6fba2c;
+  --sm-warning: #f5c31c;
+  --sm-error: #e05a5a;
+
+  /* 模式主题色（NookPhone 调色板，图标徽章用） */
+  --sm-mode-local: #889df0;
+  --sm-mode-file: #e59266;
+  --sm-mode-screen: #82d5bb;
+
+  --sm-ease: cubic-bezier(0.34, 1.2, 0.64, 1);
 }
+
+* { box-sizing: border-box; }
 
 body {
   margin: 0;
-  background: var(--sm-bg);
+  background:
+    radial-gradient(1200px 600px at 50% -10%, #fbf7e8 0%, transparent 60%),
+    var(--sm-bg);
+  background-attachment: fixed;
   color: var(--sm-text);
-  font-family: 'Nunito', 'Noto Sans SC', sans-serif;
+  font-family: var(--sm-font);
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
+
+/* ─── 动画 keyframes ─── */
+@keyframes sm-fade-up { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+@keyframes sm-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes sm-pop { 0% { transform: scale(0); } 65% { transform: scale(1.18); } 100% { transform: scale(1); } }
+@keyframes sm-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-7px); } }
+@keyframes sm-glow { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
+@keyframes sm-bounce-dot { 0%, 100% { transform: translateY(0); opacity: 0.4; } 50% { transform: translateY(-5px); opacity: 1; } }
+@keyframes sm-shimmer { 0% { background-position: -160% 0; } 100% { background-position: 260% 0; } }
+@keyframes sm-spin { to { transform: rotate(360deg); } }
+
+.sm-fade-up { animation: sm-fade-up 0.5s var(--sm-ease) both; }
+.sm-fade-in { animation: sm-fade-in 0.5s ease both; }
+.sm-float { animation: sm-float 4.5s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sm-fade-up, .sm-fade-in, .sm-float { animation: none !important; }
+}
+
+/* ─── 内容面板 ─── */
+.sm-panel {
+  background: var(--sm-bg-content);
+  border: 2.5px solid var(--sm-border);
+  border-radius: 24px;
+  box-shadow: 0 6px 0 0 var(--sm-shadow-input);
+}
+
+/* ─── 模式选择卡 ─── */
+.sm-mode-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 13px 15px;
+  text-align: left;
+  border: 2.5px solid var(--sm-border);
+  border-radius: 18px;
+  background: var(--sm-bg-content);
+  box-shadow: 0 4px 0 0 var(--sm-shadow-input);
+  transition: transform 0.2s var(--sm-ease), box-shadow 0.2s var(--sm-ease), border-color 0.2s var(--sm-ease), background 0.2s var(--sm-ease);
+  cursor: pointer;
+}
+.sm-mode-card:hover { transform: translateY(-2px); box-shadow: 0 6px 0 0 var(--sm-shadow-input); border-color: var(--sm-border-strong); }
+.sm-mode-card:active { transform: translateY(2px); box-shadow: 0 1px 0 0 var(--sm-shadow-input); }
+.sm-mode-card--active {
+  border-color: var(--sm-primary);
+  background: var(--sm-primary-bg);
+  box-shadow: 0 4px 0 0 var(--sm-primary-shadow);
+}
+.sm-mode-card:focus-visible { outline: 3px solid var(--sm-focus-yellow); outline-offset: 2px; }
+
+/* 图标徽章：实心色圆 + 白色图标，任何底色上都高对比 */
+.sm-icon-badge {
+  width: 46px;
+  height: 46px;
+  flex: none;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  box-shadow: 0 3px 0 0 rgba(90, 70, 40, 0.18);
+}
+
+/* 选中勾徽章 */
+.sm-check {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--sm-primary);
+  color: #fff;
+  box-shadow: 0 2px 0 0 var(--sm-primary-active);
+  animation: sm-pop 0.3s var(--sm-ease);
+}
+
+/* ─── 胶囊 chip（画质/帧率/音质/缓冲/倍速等选择器复用） ─── */
+.sm-chip {
+  padding: 5px 13px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  border-radius: 50px;
+  border: 2px solid var(--sm-border);
+  background: var(--sm-bg-content);
+  color: var(--sm-text-body);
+  transition: all 0.16s var(--sm-ease);
+  cursor: pointer;
+}
+.sm-chip:hover { border-color: var(--sm-primary); color: var(--sm-primary); transform: translateY(-1px); }
+.sm-chip--active {
+  background: var(--sm-primary);
+  border-color: var(--sm-primary);
+  color: #fff;
+  box-shadow: 0 3px 0 0 var(--sm-primary-active);
+}
+.sm-chip:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ─── 状态药丸 ─── */
+.sm-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 14px;
+  border-radius: 50px;
+  background: var(--sm-bg-content);
+  border: 1.5px solid var(--sm-border);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sm-text-body);
+}
+.sm-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+
+/* ─── 进度条 ─── */
+.sm-progress-track {
+  height: 12px;
+  border-radius: 50px;
+  background: var(--sm-bg-sunk);
+  border: 1.5px solid var(--sm-border);
+  overflow: hidden;
+}
+.sm-progress-fill {
+  height: 100%;
+  border-radius: 50px;
+  background: linear-gradient(90deg, var(--sm-primary), var(--sm-primary-hover));
+  background-size: 200% 100%;
+  transition: width 0.3s var(--sm-ease);
+  animation: sm-shimmer 1.6s linear infinite;
+}
+
+/* ─── 等待中的跳动圆点 ─── */
+.sm-dots { display: inline-flex; gap: 4px; }
+.sm-dots > span { width: 6px; height: 6px; border-radius: 50%; background: var(--sm-primary); animation: sm-bounce-dot 1.1s infinite; }
+.sm-dots > span:nth-child(2) { animation-delay: 0.15s; }
+.sm-dots > span:nth-child(3) { animation-delay: 0.3s; }
+
+/* 文字工具 */
+.sm-t { color: var(--sm-text); }
+.sm-t-body { color: var(--sm-text-body); }
+.sm-t-sec { color: var(--sm-text-secondary); }
+.sm-t-muted { color: var(--sm-text-muted); }
