@@ -52,7 +52,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   const joinCounters = new Map<string, { count: number; resetAt: number }>();
 
   await app.register(cors, { origin: true });
-  await app.register(websocket);
+  await app.register(websocket, { options: { maxPayload: 64 * 1024 } });
 
   // 健康检查
   app.get('/health', async () => {
@@ -154,7 +154,7 @@ export async function buildApp(): Promise<FastifyInstance> {
         } catch { return false; }
       })();
 
-      if (!isRtcSignaling && raw.byteLength > MAX_MSG_SIZE) {
+      if (raw.byteLength > (isRtcSignaling ? 64 * 1024 : MAX_MSG_SIZE)) {
         socket.send(JSON.stringify({
           type: 'error',
           data: { code: 'INVALID_SIZE', message: '消息大小超过 4KB 限制' },
@@ -303,7 +303,11 @@ export async function buildApp(): Promise<FastifyInstance> {
         }
 
         case 'room:join': {
-          const code = (msg.data as { roomCode: string }).roomCode;
+          const code = (msg.data as { roomCode?: unknown } | undefined)?.roomCode;
+          if (typeof code !== 'string') {
+            socket.send(JSON.stringify({type: 'error', data: {code: 'INVALID_ROOM', message: '房间号格式无效'}}));
+            break;
+          }
 
           if (!ROOM_CODE_REGEX.test(code)) {
             socket.send(JSON.stringify({
