@@ -70,10 +70,10 @@ export class RoomManager {
     const room = this.rooms.get(code);
     if (!room) return null;
     // 幂等：已在房间内的用户重复 join，直接返回房间（不改变角色/人数）
-    if (room.users.has(userId)) {
-      // 更新 ws 引用（可能是新连接）
-      if (!room.users.get(userId)!.ws) this.reconnectUser(code, userId, ws);
-      else room.users.get(userId)!.ws = ws;
+    const member = room.users.get(userId);
+    if (member) {
+      if (member.ws) member.ws = ws;
+      else this.reconnectUser(code, userId, ws);
       return room;
     }
     if (room.users.size >= 2) return null;
@@ -146,6 +146,8 @@ export class RoomManager {
       this.disconnectTimers.delete(sessionId);
       this.onDisconnectExpired?.(sessionId, roomCode);
     }, this.disconnectTimeoutMs);
+    // An idle reservation may expire while listening, but must not keep a closed server alive.
+    timer.unref();
     this.disconnectTimers.set(sessionId, timer);
   }
 
