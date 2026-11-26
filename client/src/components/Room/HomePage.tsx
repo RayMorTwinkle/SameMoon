@@ -7,9 +7,9 @@ import { FileVideo, Monitor, Users, Check } from 'lucide-react';
 type RoomMode = 'local-sync' | 'file-transfer' | 'screen-share';
 
 const MODE_OPTIONS: { mode: RoomMode; label: string; desc: string; icon: typeof Users; color: string }[] = [
-  { mode: 'local-sync', label: '本地同步', desc: '双方各有同一部影片，进度同步播放', icon: Users, color: 'var(--sm-mode-local)' },
-  { mode: 'file-transfer', label: '文件传输', desc: '房主把影片发给 TA，一起观看', icon: FileVideo, color: 'var(--sm-mode-file)' },
-  { mode: 'screen-share', label: '屏幕分享', desc: '实时把你的屏幕画面分享给 TA', icon: Monitor, color: 'var(--sm-mode-screen)' },
+  { mode: 'local-sync', label: '本地同步', desc: '各自打开同名、同大小的影片，一起播放', icon: Users, color: 'var(--sm-mode-local)' },
+  { mode: 'file-transfer', label: '文件传输', desc: '只有一份影片？由房主传给对方', icon: FileVideo, color: 'var(--sm-mode-file)' },
+  { mode: 'screen-share', label: '屏幕分享', desc: '从电脑分享屏幕，对方直接观看', icon: Monitor, color: 'var(--sm-mode-screen)' },
 ];
 
 /** 手绘月亮标记：柔光 + 缓慢浮动 + 一颗薄荷星 */
@@ -193,30 +193,33 @@ export function HomePage() {
         </div>
 
         {/* ② 加入 */}
-        <div className="flex items-center gap-2">
-          <div className="flex-1">
+        <form className="flex items-center gap-2" onSubmit={(event) => {
+          event.preventDefault();
+          handleJoin();
+        }}>
+          <div className="flex-1 min-w-0">
             <Input
+              aria-label="4 位房间号"
               placeholder="输入 4 位房间号"
               value={roomCode}
-              maxLength={4}
               inputMode="numeric"
-              onChange={(e) => setRoomCode((e.target as HTMLInputElement).value.replace(/\D/g, ''))}
+              onChange={(e) => setRoomCode((e.target as HTMLInputElement).value.normalize('NFKC').replace(/\D/g, '').slice(0, 4))}
             />
           </div>
           <Button
             type="default"
             size="large"
             disabled={!connected || roomCode.length !== 4}
-            onClick={handleJoin}
+            htmlType="submit"
           >
             加入
           </Button>
-        </div>
+        </form>
       </div>
 
       {/* 连接状态 */}
       <div className="sm-fade-up mt-7" style={{ animationDelay: '360ms' }}>
-        <div className="sm-pill">
+        <div className="sm-pill" role="status" aria-live="polite">
           <span
             className="sm-dot"
             style={{

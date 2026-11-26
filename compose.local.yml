@@ -1,0 +1,10 @@
+services:
+  samemoon:
+    build:
+      context: .
+      dockerfile: Dockerfile.local
+    ports:
+      - "${SAMEMOON_LOCAL_PORT:-3000}:3000"
+    environment:
+      TURN_KEY_ID: ${TURN_KEY_ID:-}
+      TURN_API_TOKEN: ${TURN_API_TOKEN:-}

@@ -1,0 +1,25 @@
+FROM node:24-bookworm-slim AS client
+WORKDIR /build/client
+COPY client/package*.json ./
+RUN npm ci --no-audit --no-fund
+COPY client/ ./
+RUN npm run build
+
+FROM node:24-bookworm-slim AS server
+WORKDIR /build/server
+COPY server/package*.json ./
+RUN npm ci --no-audit --no-fund
+COPY server/src/ ./src/
+COPY server/tsconfig.json ./
+RUN npm run build && npm prune --omit=dev --no-audit --no-fund
+
+FROM node:24-bookworm-slim
+ENV NODE_ENV=production PORT=3000
+WORKDIR /app/server
+COPY --from=server /build/server/package.json ./
+COPY --from=server /build/server/node_modules ./node_modules
+COPY --from=server /build/server/dist ./dist
+COPY --from=client /build/client/dist /app/client/dist
+USER node
+EXPOSE 3000
+CMD ["node", "dist/local.js"]

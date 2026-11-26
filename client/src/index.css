@@ -15,8 +15,8 @@
 
   --sm-text: #794f27;
   --sm-text-body: #725d42;
-  --sm-text-secondary: #9f927d;
-  --sm-text-muted: #b3a488;
+  --sm-text-secondary: #75664e;
+  --sm-text-muted: #79674d;
 
   --sm-bg: #f4f1e4;
   --sm-bg-content: #fdfbef;
@@ -198,3 +198,9 @@ body {
 .sm-t-body { color: var(--sm-text-body); }
 .sm-t-sec { color: var(--sm-text-secondary); }
 .sm-t-muted { color: var(--sm-text-muted); }
+
+
+@media (prefers-reduced-motion: reduce) {
+  .sm-check, .sm-dot, .sm-dots > span, .sm-progress-fill { animation: none !important; }
+  .sm-mode-card, .sm-chip { transition: none; }
+}

@@ -1,0 +1,15 @@
+**
+!client/
+!client/index.html
+!client/package*.json
+!client/public/
+!client/public/**
+!client/src/
+!client/src/**
+!client/tsconfig*.json
+!client/vite.config.ts
+!server/
+!server/package*.json
+!server/src/
+!server/src/**
+!server/tsconfig.json
