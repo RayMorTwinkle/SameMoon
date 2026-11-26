@@ -9,6 +9,9 @@ const crypto = require('node:crypto');
 const ts = createRequire(path.resolve('client/package.json'))('typescript');
 
 const requested = process.argv[2];
+const profile = process.argv[3] || 'original';
+if (!['original', 'sensitivity'].includes(profile)) throw new Error('Unknown fixture profile ' + profile);
+const sensitivity = profile === 'sensitivity';
 if (!requested) throw new Error('Pass the baseline or candidate git revision');
 const revision = execFileSync('git', ['rev-parse', '--verify', requested + '^{commit}'], { encoding: 'utf8' }).trim();
 const build = mkdtempSync(path.join(os.tmpdir(), 'samemoon-eval-'));
@@ -82,7 +85,7 @@ class Media {
 }
 
 // Fixed stress fixtures, not a sampled network distribution. No per-version parameters.
-const scenarios = [
+const originalCases = [
   { name: 'nominal-1x', rate: 1, errorMs: -700 },
   { name: 'ahead-1.5x', rate: 1.5, errorMs: 800 },
   { name: 'behind-0.75x', rate: 0.75, errorMs: -650 },
@@ -90,17 +93,29 @@ const scenarios = [
   { name: 'hard-seek', rate: 1, errorMs: -3200 },
   { name: 'inside-deadband', rate: 1, errorMs: 90 },
 ];
+// Specified after the controller commit, before observing this profile's outcomes.
+const asymmetricCases = [
+  { name: 'asymmetric-ahead-0.5x', rate: 0.5, errorMs: 1200 },
+  { name: 'asymmetric-behind-2x', rate: 2, errorMs: -1450 },
+  { name: 'asymmetric-long-silence', rate: 1.25, errorMs: -1750, gap: [900, 44000] },
+  { name: 'asymmetric-band-edge', rate: 1, errorMs: -340 },
+];
+const scenarios = sensitivity ? asymmetricCases : originalCases;
 const warmup = 20_000;
 const horizon = 60_000;
 const cadence = 100;
 const band = 300;
 const jitter = [18, 64, 26, 101, 35, 22, 47, 29];
+const directionalJitter = [[180, 440, 205, 510, 170, 330, 215], [14, 25, 9, 28, 42, 11, 17]];
+const followerClockOffsetMs = sensitivity ? -920 : 375;
+const followerClockPpm = sensitivity ? -65 : 40;
+const followerMediaPpm = sensitivity ? -115 : 80;
 const round = x => Number(x.toFixed(3));
 
 function run({ ClockSync, SyncEngine }, fixture) {
   const scheduler = new Scheduler();
-  const media = [new Media(scheduler, 0), new Media(scheduler, 80)];
-  const clocks = [scheduler.clock(0, 0), scheduler.clock(375, 40)].map(c => new ClockSync(c));
+  const media = [new Media(scheduler, 0), new Media(scheduler, followerMediaPpm)];
+  const clocks = [scheduler.clock(0, 0), scheduler.clock(followerClockOffsetMs, followerClockPpm)].map(c => new ClockSync(c));
   const engines = [];
   const count = [0, 0];
   let dropped = 0;
@@ -109,7 +124,9 @@ function run({ ClockSync, SyncEngine }, fixture) {
       const n = count[i]++;
       const t = scheduler.now - warmup;
       if (fixture.gap && t >= fixture.gap[0] && t < fixture.gap[1]) { dropped++; return; }
-      const delay = jitter[(n + i * 3) % jitter.length];
+      const delay = sensitivity
+        ? directionalJitter[i][n % directionalJitter[i].length]
+        : jitter[(n + i * 3) % jitter.length];
       scheduler.add(() => engines[1-i].handleRemoteMessage(message), delay);
     }};
     engines.push(new SyncEngine({ adapter: media[i], userId: i ? 'b' : 'a', clockSync: clocks[i], transport }));
@@ -146,7 +163,7 @@ try {
   const invalidClock = { ready: sampleClock.isReady, offsetMs: sampleClock.getOffset() };
   const result = {
     revision, sources, node: process.version, typescript: ts.version,
-    config: { warmup, horizon, cadence, band, jitter, followerClockOffsetMs: 375, followerClockPpm: 40, followerMediaPpm: 80, traceColumns: ['elapsedMs', 'followerMinusLeaderMs', 'followerPlaybackRate'] },
+    config: { warmup, horizon, cadence, band, ...(sensitivity ? { profile, directionalJitter } : { jitter }), followerClockOffsetMs, followerClockPpm, followerMediaPpm, traceColumns: ['elapsedMs', 'followerMinusLeaderMs', 'followerPlaybackRate'] },
     invalidClock, cases: scenarios.map(s => run(controllers, s)),
   };
   console.log(JSON.stringify(result, null, 0));
