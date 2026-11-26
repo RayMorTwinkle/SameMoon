@@ -16,6 +16,16 @@ export interface PlaybackState {
   sentAt: number; // 发送方原始时钟（ms）；接收方用校准后 now()（≈对方原始时钟）比较
 }
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isPlaybackState(data: Record<string, unknown>): data is Record<string, unknown> & PlaybackState {
+  return typeof data.paused === 'boolean' && typeof data.senderId === 'string'
+    && isFiniteNumber(data.time) && data.time >= 0 && isFiniteNumber(data.rate) && data.rate > 0
+    && isFiniteNumber(data.sentAt) && isFiniteNumber(data.seq) && Number.isSafeInteger(data.seq) && data.seq >= 0;
+}
+
 export interface SyncTransport {
   send(msg: Record<string, unknown>): void;
 }
@@ -58,10 +68,10 @@ export class SyncEngine {
   private readonly driftRate: number;
   private readonly echoWindow: number;
 
-  // 变速追赶状态
-  private chasing = false;
-  // 引擎自身发起的变速标志（防止追赶变速被误判为用户操作并广播，Fix P1-4）
-  private internalRateChange = false;
+  // A chase has a deadline even when the next heartbeat never arrives.
+  private chase: { baseRate: number; timer: ReturnType<typeof setTimeout> } | null = null;
+  private internalRate: number | null = null;
+  private static readonly HEARTBEAT_MS = 5000;
 
   // 远端节点 id（从心跳获知）：用于确定 leader/follower，避免双方同时漂移校正互相拉扯
   private peerId: string | null = null;
@@ -85,6 +95,7 @@ export class SyncEngine {
 
   /** 启动：挂接本地事件 + 开始漂移检测 */
   start(): void {
+    if (this.driftTimer !== null) return;
     // 本地播放器事件 → 广播（回声检查）
     this.unsubscribers.push(
       this.adapter.on('play', () => this.onLocalEvent('sync:play')),
@@ -96,21 +107,28 @@ export class SyncEngine {
     );
 
     // 每 5s 漂移检测（复用心跳节奏）
-    this.driftTimer = this.timerClock.setInterval(() => this.checkDrift(), 5000);
+    this.driftTimer = this.timerClock.setInterval(() => this.sendHeartbeat(), SyncEngine.HEARTBEAT_MS);
   }
 
   /** 停止：清理所有监听和定时器 */
   stop(): void {
     this.unsubscribers.forEach(fn => fn());
     this.unsubscribers = [];
-    if (this.driftTimer) this.timerClock.clearInterval(this.driftTimer);
-    if (this.echoTimer) this.timerClock.clearTimeout(this.echoTimer);
-    if (this.bufferingTimer) this.timerClock.clearTimeout(this.bufferingTimer);
+    if (this.driftTimer !== null) this.timerClock.clearInterval(this.driftTimer);
+    if (this.echoTimer !== null) this.timerClock.clearTimeout(this.echoTimer);
+    if (this.bufferingTimer !== null) this.timerClock.clearTimeout(this.bufferingTimer);
+    this.driftTimer = null;
+    this.echoTimer = null;
+    this.bufferingTimer = null;
+    this.endChase();
+    this.applyingRemote = false;
+    this.internalRate = null;
   }
 
   /** 处理来自远端的同步消息 */
   handleRemoteMessage(msg: Record<string, unknown>): void {
     const type = msg.type as string;
+    if (typeof msg.data !== 'object' || msg.data === null || Array.isArray(msg.data)) return;
     const data = msg.data as Record<string, unknown>;
 
     switch (type) {
@@ -118,9 +136,8 @@ export class SyncEngine {
       case 'sync:pause':
       case 'sync:seek':
       case 'sync:rate': {
-        const state = data as unknown as PlaybackState;
-        if (this.shouldAccept(state)) {
-          this.applyRemote(state);
+        if (isPlaybackState(data) && this.shouldAccept(data)) {
+          this.applyRemote(data);
         }
         break;
       }
@@ -129,20 +146,19 @@ export class SyncEngine {
         if (data.seq === undefined || data.seq === null) {
           // 对方请求我的状态 → 回复
           this.sendState();
-        } else {
-          const state = data as unknown as PlaybackState;
-          this.seq = Math.max(this.seq, state.seq);
-          this.applyRemote(state);
+        } else if (isPlaybackState(data) && data.seq >= this.seq) {
+          this.applyRemote(data);
         }
         break;
       }
       case 'sync:buffering': {
         // 对方在缓冲 → 暂停等待（§1.6）
         this.setApplyingRemote();
+        this.endChase();
         this.adapter.pause();
         this.onEvent?.('buffering');
         // 启动 30s 超时保护：超时后通知 UI 解除同步锁
-        if (this.bufferingTimer) this.timerClock.clearTimeout(this.bufferingTimer);
+        if (this.bufferingTimer !== null) this.timerClock.clearTimeout(this.bufferingTimer);
         this.bufferingTimer = this.timerClock.setTimeout(() => {
           this.bufferingTimer = null;
           this.emitBufferingTimeout();
@@ -150,14 +166,15 @@ export class SyncEngine {
         break;
       }
       case 'sync:ready': {
+        if (!isFiniteNumber(data.time) || data.time < 0) return;
         // 对方就绪 → 对齐后恢复；同时取消缓冲超时
-        if (this.bufferingTimer) {
+        if (this.bufferingTimer !== null) {
           this.timerClock.clearTimeout(this.bufferingTimer);
           this.bufferingTimer = null;
         }
-        const time = (data as { time: number }).time;
         this.setApplyingRemote(SyncEngine.SEEK_ECHO_MS);
-        this.adapter.seek(time);
+        this.endChase();
+        this.adapter.seek(data.time);
         this.adapter.play().catch(() => {});
         this.onEvent?.('synced');
         break;
@@ -191,7 +208,7 @@ export class SyncEngine {
         clientTime: this.clockSync.rawNow(),  // t0（原始时钟，Fix P1-5）
         time: this.adapter.getTime(),
         paused: this.adapter.getPaused(),
-        rate: this.adapter.getRate(),
+        rate: this.selectedRate(),
       },
     });
   }
@@ -201,14 +218,7 @@ export class SyncEngine {
   /** 捕获当前状态（用户操作触发，递增 seq） */
   private captureState(): PlaybackState {
     this.seq += 1;
-    return {
-      paused: this.adapter.getPaused(),
-      time: this.adapter.getTime(),
-      rate: this.adapter.getRate(),
-      seq: this.seq,
-      senderId: this.userId,
-      sentAt: this.clockSync.rawNow(),
-    };
+    return this.snapshotState();
   }
 
   /** 快照当前状态（被动响应，不递增 seq，避免 sendState 错误膨胀 seq） */
@@ -216,7 +226,7 @@ export class SyncEngine {
     return {
       paused: this.adapter.getPaused(),
       time: this.adapter.getTime(),
-      rate: this.adapter.getRate(),
+      rate: this.selectedRate(),
       seq: this.seq,
       senderId: this.userId,
       sentAt: this.clockSync.rawNow(),
@@ -225,22 +235,33 @@ export class SyncEngine {
 
   private onLocalEvent(type: string): void {
     if (this.applyingRemote) return; // 回声抑制（§1.3）
-    // 引擎自身变速触发的 ratechange 不广播，也不打断追赶（Fix P1-4）
-    if (type === 'sync:rate' && this.internalRateChange) return;
-    if (this.chasing) {
-      // 变速追赶期间用户手动操作 → 放弃追赶
-      this.chasing = false;
-      this.setRateInternal(1);
+    if (type === 'sync:rate') {
+      if (this.adapter.getRate() === this.internalRate) return;
+      // Keep a new user-selected rate even if a previous correction is still active.
+      this.internalRate = null;
+      this.endChase(false);
+    } else {
+      this.endChase();
     }
     this.transport.send({ type, data: this.captureState() });
   }
 
-  /** 引擎内部变速：抑制随之而来的 ratechange 本地事件（Fix P1-4） */
+  private selectedRate(): number {
+    return this.chase?.baseRate ?? this.adapter.getRate();
+  }
+
+  private endChase(restoreRate = true): void {
+    if (!this.chase) return;
+    const { timer, baseRate } = this.chase;
+    this.timerClock.clearTimeout(timer);
+    this.chase = null;
+    if (restoreRate) this.setRateInternal(baseRate);
+  }
+
   private setRateInternal(rate: number): void {
     if (this.adapter.getRate() === rate) return;
-    this.internalRateChange = true;
+    this.internalRate = rate;
     this.adapter.setRate(rate);
-    this.timerClock.setTimeout(() => { this.internalRateChange = false; }, this.echoWindow);
   }
 
   private onBuffering(): void {
@@ -268,6 +289,7 @@ export class SyncEngine {
 
   /** §1.3 施加远端状态（带回声抑制） */
   private applyRemote(state: PlaybackState): void {
+    this.endChase(false);
     this.seq = Math.max(this.seq, state.seq);
 
     // 补偿传输延迟（§1.3 末尾）：时间戳约定见 ClockSync.rawNow()。
@@ -286,7 +308,7 @@ export class SyncEngine {
     this.setApplyingRemote(needSeek ? SyncEngine.SEEK_ECHO_MS : this.echoWindow);
 
     if (needSeek) this.adapter.seek(targetTime);
-    this.adapter.setRate(state.rate);
+    this.setRateInternal(state.rate);
 
     if (state.paused) {
       this.adapter.pause();
@@ -298,16 +320,10 @@ export class SyncEngine {
   /** 设置回声抑制窗口 */
   private setApplyingRemote(ms: number = this.echoWindow): void {
     this.applyingRemote = true;
-    if (this.echoTimer) this.timerClock.clearTimeout(this.echoTimer);
+    if (this.echoTimer !== null) this.timerClock.clearTimeout(this.echoTimer);
     this.echoTimer = this.timerClock.setTimeout(() => {
       this.applyingRemote = false;
     }, ms);
-  }
-
-  /** §1.4 漂移校正（三档）：心跳始终发送（时钟校准需要样本），
-   *  漂移校正在 applyDriftCorrection 内部自行跳过暂停状态 */
-  private checkDrift(): void {
-    this.sendHeartbeat();
   }
 
   /**
@@ -316,45 +332,31 @@ export class SyncEngine {
    * 收到有 echoOf 的心跳 = 响应：计算时钟偏移 + 用对方状态做漂移校正
    */
   private handleHeartbeat(data: Record<string, unknown>): void {
-    if (this.peerId === null && typeof data.senderId === 'string') {
-      this.peerId = data.senderId;
-    }
-    const remoteTime = data.time as number | undefined;
-    const remotePaused = data.paused as boolean | undefined;
-
+    const sentAt = data.clientTime;
+    if (!isFiniteNumber(sentAt)) return;
     if (data.echoOf === undefined) {
       // 这是请求：记录 t1，回复带 echo
       const t1 = this.clockSync.rawNow();
-      const t0 = data.clientTime as number;
       this.transport.send({
         type: 'sync:heartbeat',
         data: {
           senderId: this.userId,
-          echoOf: t0,          // 回显对方 t0
+          echoOf: sentAt,          // 回显对方 t0
           t1,                  // 我收到时刻
           clientTime: this.clockSync.rawNow(), // t2（我发送时刻，原始时钟）
           time: this.adapter.getTime(),
           paused: this.adapter.getPaused(),
-          rate: this.adapter.getRate(),
+          rate: this.selectedRate(),
         },
       });
-      // 用对方携带的状态做漂移校正（Fix N1：时钟未校准时跳过，避免误触发）
-      if (this.clockSync.isReady
-          && remoteTime !== undefined && remotePaused !== undefined) {
-        this.applyDriftCorrection(remoteTime, remotePaused, t0);
-      }
     } else {
-      // 这是响应：计算时钟偏移
-      const t0 = data.echoOf as number;
-      const t1 = data.t1 as number;
-      const t2 = data.clientTime as number;
-      const t3 = this.clockSync.rawNow();
-      this.clockSync.addSample(t0, t1, t2, t3);
-      // 用对方状态做漂移校正（Fix N1：时钟未校准时跳过，避免误触发）
-      if (this.clockSync.isReady
-          && remoteTime !== undefined && remotePaused !== undefined) {
-        this.applyDriftCorrection(remoteTime, remotePaused, t2);
-      }
+      if (!isFiniteNumber(data.echoOf) || !isFiniteNumber(data.t1)) return;
+      if (!this.clockSync.addSample(data.echoOf, data.t1, sentAt, this.clockSync.rawNow())) return;
+    }
+    if (this.peerId === null && typeof data.senderId === 'string') this.peerId = data.senderId;
+    if (this.clockSync.isReady && isFiniteNumber(data.time) && data.time >= 0 && typeof data.paused === 'boolean') {
+      const rate = isFiniteNumber(data.rate) && data.rate > 0 ? data.rate : this.selectedRate();
+      this.applyDriftCorrection(data.time, data.paused, sentAt, rate);
     }
   }
 
@@ -364,14 +366,14 @@ export class SyncEngine {
    * @param remotePaused 对方是否暂停
    * @param remoteSentAt 对方发送心跳时的统一时间
    */
-  applyDriftCorrection(remoteTime: number, remotePaused: boolean, remoteSentAt: number): void {
+  applyDriftCorrection(remoteTime: number, remotePaused: boolean, remoteSentAt: number, remoteRate = this.selectedRate()): void {
     // 仅 follower（userId 较大方）做漂移校正，leader 作为基准不自我调整，
     // 避免双方同时校正互相拉扯（rate 抖动 / 校正震荡）
     if (this.peerId && this.userId < this.peerId) return;
     if (this.adapter.getPaused() || remotePaused) return;
 
-    const elapsed = (this.clockSync.now() - remoteSentAt) / 1000;
-    const expectedRemoteTime = remoteTime + elapsed * this.adapter.getRate();
+    const elapsed = Math.max(0, this.clockSync.now() - remoteSentAt) / 1000;
+    const expectedRemoteTime = remoteTime + elapsed * remoteRate;
     const localTime = this.adapter.getTime();
     const drift = localTime - expectedRemoteTime; // 正 = 本地领先
 
@@ -379,27 +381,27 @@ export class SyncEngine {
 
     if (absDrift < this.driftIgnore) {
       // 忽略
-      if (this.chasing) {
-        this.chasing = false;
-        this.setRateInternal(1);
-      }
+      this.endChase();
       this.onEvent?.('synced');
       return;
     }
 
     if (absDrift <= this.driftRate) {
       // 变速追赶（§1.4 中档）
-      this.chasing = true;
-      // 本地落后（drift < 0）→ 加速；本地领先（drift > 0）→ 减速
-      this.setRateInternal(drift < 0 ? 1.05 : 0.95);
+      const baseRate = this.selectedRate();
+      const correction = baseRate * 0.05;
+      // Stop at the predicted intersection; limit extrapolation to two heartbeat periods.
+      const duration = Math.min(absDrift / correction * 1000, 2 * SyncEngine.HEARTBEAT_MS);
+      this.endChase(false);
+      this.chase = { baseRate, timer: this.timerClock.setTimeout(() => this.endChase(), duration) };
+      this.setRateInternal(baseRate - Math.sign(drift) * correction);
       this.onEvent?.('drifting', { drift });
       return;
     }
 
     // >2s 直接 seek（§1.4 大档）
-    this.chasing = false;
     this.setApplyingRemote(SyncEngine.SEEK_ECHO_MS);
-    this.setRateInternal(1);
+    this.endChase();
     this.adapter.seek(expectedRemoteTime);
     this.onEvent?.('drifting', { drift, seeked: true });
   }

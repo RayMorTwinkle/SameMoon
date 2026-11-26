@@ -37,6 +37,7 @@ export interface ClockSample {
 
 export class ClockSync implements Clock {
   private samples: ClockSample[] = [];
+  private offset = 0;
   private readonly maxSamples = 10;
   private readonly clock: Clock;
 
@@ -45,26 +46,25 @@ export class ClockSync implements Clock {
   }
 
   /** 记录一次采样结果 */
-  addSample(t0: number, t1: number, t2: number, t3: number): void {
+  addSample(t0: number, t1: number, t2: number, t3: number): boolean {
+    if (![t0, t1, t2, t3].every(Number.isFinite) || t3 < t0 || t2 < t1) return false;
     const offset = ((t1 - t0) + (t2 - t3)) / 2;
     const rtt = (t3 - t0) - (t2 - t1);
+    if (!Number.isFinite(offset) || !Number.isFinite(rtt) || rtt < 0) return false;
     this.samples.push({ offset, rtt });
     if (this.samples.length > this.maxSamples) {
       this.samples.shift();
     }
-  }
-
-  /**
-   * 获取当前时钟偏移估计值（ms）
-   * 取 rtt 最小的 3 个样本的 offset 中位数
-   */
-  getOffset(): number {
-    if (this.samples.length === 0) return 0;
-
+    // 仅在采样变化时更新最低 RTT 样本的中位数。
     const sorted = [...this.samples].sort((a, b) => a.rtt - b.rtt);
     const best = sorted.slice(0, Math.min(3, sorted.length));
     const offsets = best.map(s => s.offset).sort((a, b) => a - b);
-    return offsets[Math.floor(offsets.length / 2)];
+    this.offset = offsets[Math.floor(offsets.length / 2)];
+    return true;
+  }
+
+  getOffset(): number {
+    return this.offset;
   }
 
   /** 将对方时间戳转换为本地时间表示 */
@@ -110,5 +110,6 @@ export class ClockSync implements Clock {
 
   reset(): void {
     this.samples = [];
+    this.offset = 0;
   }
 }

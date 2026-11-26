@@ -72,86 +72,46 @@ describe('SyncEngine', () => {
     engineA.start();
     engineB.start();
 
-    // A 先 seek(12)，等回声抑制窗口过期后 B 再 seek(15)
-    // 这样 B 的操作不会被当作回声抑制
-    adapterA.currentTime = 12;
+    // Hold both messages until both users independently produce sequence 1.
+    const toA: Record<string, unknown>[] = [];
+    const toB: Record<string, unknown>[] = [];
+    engineA['transport'] = { send: m => toB.push(m) };
+    engineB['transport'] = { send: m => toA.push(m) };
     adapterA.seek(12);
-    // 推进时间超过回声窗口（150ms）
-    clockA.advance(200);
-    clockB.advance(200);
-
-    adapterB.currentTime = 15;
     adapterB.seek(15);
-    // 推进时间超过回声窗口
-    clockA.advance(200);
-    clockB.advance(200);
-
-    // B 的 seq=1 > A 的 seq=1？不，A 也是 seq=1。
-    // seq 相同时 senderId 大者胜：user-b > user-a
-    // 所以 A 应收敛到 B 的值（15s）
-    expect(adapterA.getTime()).toBeGreaterThanOrEqual(15);
-    expect(adapterB.getTime()).toBeGreaterThanOrEqual(15);
-    // 双方最终位置相同
-    expect(adapterA.getTime()).toBeCloseTo(adapterB.getTime(), 5);
+    expect(toA).toHaveLength(1);
+    expect(toB).toHaveLength(1);
+    engineA.handleRemoteMessage(toA[0]);
+    engineB.handleRemoteMessage(toB[0]);
+    expect(adapterA.getTime()).toBe(15);
+    expect(adapterB.getTime()).toBe(15);
   });
 
   it('场景 3：小漂移 0.5s → 变速追赶，不 seek', () => {
     engineA.start();
     engineB.start();
 
-    // 先通过心跳校准时钟（≥3 次采样后 isReady=true）
-    for (let i = 0; i < 5; i++) {
-      engineA.sendHeartbeat();
-      clockA.advance(50);
-      clockB.advance(50);
-    }
-
-    // A 落后 0.5s（在 driftIgnore 0.3s 和 driftRate 2s 之间 → 中档：变速追赶）
-    adapterA.currentTime = 100;
-    adapterB.currentTime = 100.5;
-    adapterA.paused = false;
-    adapterB.paused = false;
-
-    // B 发心跳 → A 收到后应加速追赶
-    adapterA.resetCalls();
-    engineB.sendHeartbeat();
-    clockA.advance(50);
-    clockB.advance(50);
-
-    // A 应设置 rate=1.05（加速），不应 seek
-    const setRateCalls = adapterA.calls.filter(c => c.method === 'setRate');
-    expect(setRateCalls.length).toBeGreaterThan(0);
-    // 应有 1.05（加速）的调用
-    const hasChaseRate = setRateCalls.some(c => (c.args[0] as number) > 1.0);
-    expect(hasChaseRate).toBe(true);
-    // 不应 seek（中档校正用变速，不用 seek）
-    expect(adapterA.calls.filter(c => c.method === 'seek').length).toBe(0);
+    for (let i = 0; i < 3; i++) engineB.sendHeartbeat();
+    adapterA.currentTime = 100.5;
+    adapterB.currentTime = 100;
+    adapterA.paused = adapterB.paused = false;
+    engineA.sendHeartbeat();
+    expect(adapterB.getRate()).toBeCloseTo(1.05);
+    expect(adapterB.calls.some(c => c.method === 'seek')).toBe(false);
+    expect(adapterA.getRate()).toBe(1);
   });
 
-  it('场景 4：大漂移 >2s → 直接 seek', () => {
+  it('场景 4：大漂移 >2s → follower 跳转至 leader 的进度', () => {
     engineA.start();
     engineB.start();
-
-    // 先校准时钟
-    for (let i = 0; i < 5; i++) {
-      engineA.sendHeartbeat();
-      clockA.advance(50);
-      clockB.advance(50);
-    }
-
-    // A 落后 3s
-    adapterA.currentTime = 100;
-    adapterB.currentTime = 103;
-    adapterA.paused = false;
-    adapterB.paused = false;
-
-    adapterA.resetCalls();
-    engineB.sendHeartbeat();
-
-    // A 应 seek 到约 103s
-    const seekCalls = adapterA.calls.filter(c => c.method === 'seek');
-    expect(seekCalls.length).toBeGreaterThan(0);
-    expect(seekCalls[seekCalls.length - 1].args[0]).toBeGreaterThan(102);
+    for (let i = 0; i < 3; i++) engineB.sendHeartbeat();
+    adapterA.currentTime = 103;
+    adapterB.currentTime = 100;
+    adapterA.paused = adapterB.paused = false;
+    engineA.sendHeartbeat();
+    expect(adapterB.calls.filter(c => c.method === 'seek')).toHaveLength(1);
+    expect(adapterB.getTime()).toBe(103);
+    expect(adapterA.calls.some(c => c.method === 'seek')).toBe(false);
   });
 
   it('场景 5：回声抑制 — applyRemote 触发的事件不广播', () => {

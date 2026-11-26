@@ -10,7 +10,7 @@ import type { Clock } from '../src/services/sync/ClockSync';
 /** 可控时钟：测试中手动推进时间 */
 export class FakeClock implements Clock {
   private nowMs: number;
-  private timers: Array<{ id: number; at: number; cb: () => void }> = [];
+  private timers: Array<{ id: number; at: number; cb: () => void; period?: number }> = [];
   private nextId = 1;
 
   constructor(startMs = 1_000_000) {
@@ -31,8 +31,9 @@ export class FakeClock implements Clock {
       if (due.length === 0) break;
       // 只触发最早到期的那一个（cb 执行时可能注册新 timer 或修改时间）
       const t = due[0];
-      this.timers = this.timers.filter(x => x.id !== t.id);
-      this.nowMs = t.at; // 跳到该 timer 的触发时刻
+      this.nowMs = t.at;
+      if (t.period) t.at += t.period;
+      else this.timers = this.timers.filter(x => x.id !== t.id); // 跳到该 timer 的触发时刻
       t.cb();
     }
     this.nowMs = target;
@@ -50,13 +51,7 @@ export class FakeClock implements Clock {
 
   setInterval(cb: () => void, ms: number): ReturnType<typeof setInterval> {
     const id = this.nextId++;
-    const wrapper = () => {
-      cb();
-      // 重新注册下一次（保持周期性）
-      const existing = this.timers.find(t => t.id === id);
-      if (existing) existing.at = this.nowMs + ms;
-    };
-    this.timers.push({ id, at: this.nowMs + ms, cb: wrapper });
+    this.timers.push({ id, at: this.nowMs + ms, cb, period: ms });
     return id as unknown as ReturnType<typeof setInterval>;
   }
 
