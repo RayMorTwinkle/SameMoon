@@ -1,0 +1,26 @@
+
+> samemoon-server@0.1.0 test
+> npm run build && NODE_ENV=test node --test test/*.test.mjs && vitest run test/*.test.ts
+
+
+> samemoon-server@0.1.0 build
+> tsc
+
+✔ reloading a matched local room asks for the file and allows it to match again (125.664667ms)
+✔ malformed room messages return an error and server stays healthy (137.502291ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 390.479125
+
+ RUN  v4.1.12 /private/tmp/samemoon-validation.9IbrvL/server
+
+
+ Test Files  3 passed (3)
+      Tests  34 passed (34)
+   Start at  17:29:12
+   Duration  1.03s (transform 242ms, setup 0ms, import 445ms, tests 898ms, environment 0ms)

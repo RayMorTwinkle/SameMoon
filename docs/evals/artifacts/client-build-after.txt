@@ -1,0 +1,36 @@
+
+> client@0.0.0 build
+> tsc -b && vite build
+
+fatal: not a git repository (or any of the parent directories): .git
+vite v8.1.5 building client environment for production...
+[2Ktransforming...✓ 1949 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                                                                     0.61 kB │ gzip:   0.45 kB
+dist/assets/icon-map.9182b8ee-Dr7Frxpu.svg                                          4.18 kB │ gzip:   1.69 kB
+dist/assets/icon-miles.defd75be-Dgog9BV0.svg                                        4.28 kB │ gzip:   2.04 kB
+dist/assets/icon-helicopter.6d8fe926-ngny4_4y.svg                                   4.33 kB │ gzip:   2.02 kB
+dist/assets/icon-critterpedia.2c4ac782-CkXkHrlx.svg                                 4.42 kB │ gzip:   1.90 kB
+dist/assets/item-022.af1e3961-BBS40OL7.png                                          8.02 kB
+dist/assets/noto-sans-sc-latin-400-normal.d0072abd-C8q2FS1w.woff2                  13.30 kB
+dist/assets/noto-sans-sc-latin-500-normal.df58f967-JVPArRf3.woff2                  13.32 kB
+dist/assets/noto-sans-sc-latin-700-normal.11e48442-BzR54Sjf.woff2                  13.41 kB
+dist/assets/select-cursor.9437140a-C8sGf5zH.svg                                    15.57 kB │ gzip:  11.68 kB
+dist/assets/nunito-latin-700-normal.0b62b606-Dort48En.woff2                        16.22 kB
+dist/assets/nunito-latin-500-normal.78b3b3a4-EugFkASW.woff2                        16.42 kB
+dist/assets/nunito-latin-900-normal.8b5d13b8-BVB1fGs6.woff2                        16.67 kB
+dist/assets/footer-sea.42da0dab-KW3WQY0j.svg                                       35.63 kB │ gzip:  14.72 kB
+dist/assets/footer-tree.00819557-BRl1Kfv7.webp                                     47.56 kB
+dist/assets/noto-sans-sc-chinese-simplified-400-normal.e25467c8-Ba7eOkfT.woff2  1,142.55 kB
+dist/assets/noto-sans-sc-chinese-simplified-500-normal.d3553b6f-z_irmif2.woff2  1,159.12 kB
+dist/assets/noto-sans-sc-chinese-simplified-700-normal.6e0a7691-DoUziBww.woff2  1,172.24 kB
+dist/assets/index-DsRiL4IX.css                                                    131.50 kB │ gzip:  31.34 kB
+dist/assets/index-D6XUJhNM.js                                                     720.38 kB │ gzip: 203.52 kB
+
+✓ built in 1.62s
+[plugin builtin:vite-reporter]
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.

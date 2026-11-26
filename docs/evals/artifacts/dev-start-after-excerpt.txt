@@ -1,0 +1,14 @@
+> predev
+> node scripts/prepare-dev.mjs
+Installing locked development dependencies in .
+added 25 packages in 25s
+Installing locked development dependencies in server
+added 135 packages in 18s
+Installing locked development dependencies in client
+added 353 packages in 1m
+> dev
+> concurrently --kill-others -n server,client -c blue,green "npm run dev:server" "npm run dev:client"
+[server] 🌙 Same Moon server running on port 4000
+[client] Port 3000 is in use, trying another one...
+[client] Port 3001 is in use, trying another one...
+[client]   ➜  Local:   http://localhost:3002/

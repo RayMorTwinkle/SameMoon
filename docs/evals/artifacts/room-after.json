@@ -1,0 +1,37 @@
+{
+  "sourceSha256": "c98509467af20954c30e0028471fff2cedd1ee3f8d93f5a2771307bbf2ff0cf0",
+  "node": "v24.15.0",
+  "checks": [
+    {
+      "scenario": "reload-requires-file-reselection",
+      "expected": "selecting",
+      "observed": "selecting",
+      "pass": true
+    },
+    {
+      "scenario": "online-with-mismatched-files",
+      "expected": "selecting",
+      "observed": "selecting",
+      "pass": true
+    },
+    {
+      "scenario": "two-online-and-matched",
+      "expected": "playing",
+      "observed": "playing",
+      "pass": true
+    },
+    {
+      "scenario": "only-online-host-after-guest-expiry",
+      "expected": "waiting",
+      "observed": "waiting",
+      "pass": true
+    },
+    {
+      "scenario": "replacement-viewer-arrives",
+      "expected": "selecting",
+      "observed": "selecting",
+      "pass": true
+    }
+  ],
+  "passed": 5
+}

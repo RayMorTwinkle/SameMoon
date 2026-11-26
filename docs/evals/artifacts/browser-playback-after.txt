@@ -1,0 +1,16 @@
+Ego Chromium, two tabs on 127.0.0.1:19360; Docker build with controller c8308cd.
+Recorded from the ego-browser nodejs CLI transcript (its browser console output went to stderr).
+
+Guest selected 1.5x with the ready handshake complete, host video.playbackRate observed:
+Host received guest 1.5x change
+{ paused: true, rate: 1.5 }
+
+Host clicked the ArtPlayer control twice; the script waited on guest video.paused for each transition:
+Guest received host play
+Guest received host pause
+{ media: true, paused: true, rate: 1.5 }
+
+Second run, guest selected 0.75x; host played and paused; both real media elements after the wait:
+p1 { decoded: true, paused: true, playbackRate: 0.75 }
+p2 { decoded: true, paused: true, playbackRate: 0.75 }
+Remote rate, play, pause assertions passed against two tabs on loopback.

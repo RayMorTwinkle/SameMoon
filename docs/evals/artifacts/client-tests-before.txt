@@ -1,0 +1,55 @@
+
+> client@0.0.0 test
+> vitest run
+
+
+ RUN  v4.1.10 /private/tmp/samemoon-1126-base.y8CMKs/client
+
+ ❯ test/SyncEngine.test.ts (8 tests | 3 failed) 11ms
+     × 场景 2：双方同时操作（seq 冲突）→ 收敛到同一胜者 5ms
+     × 场景 3：小漂移 0.5s → 变速追赶，不 seek 1ms
+     × 场景 4：大漂移 >2s → 直接 seek 0ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/SyncEngine.test.ts > SyncEngine > 场景 2：双方同时操作（seq 冲突）→ 收敛到同一胜者
+AssertionError: expected 12 to be greater than or equal to 15
+ ❯ test/SyncEngine.test.ts:92:32
+     90|     // seq 相同时 senderId 大者胜：user-b > user-a
+     91|     // 所以 A 应收敛到 B 的值（15s）
+     92|     expect(adapterA.getTime()).toBeGreaterThanOrEqual(15);
+       |                                ^
+     93|     expect(adapterB.getTime()).toBeGreaterThanOrEqual(15);
+     94|     // 双方最终位置相同
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  test/SyncEngine.test.ts > SyncEngine > 场景 3：小漂移 0.5s → 变速追赶，不 seek
+AssertionError: expected 0 to be greater than 0
+ ❯ test/SyncEngine.test.ts:123:33
+    121|     // A 应设置 rate=1.05（加速），不应 seek
+    122|     const setRateCalls = adapterA.calls.filter(c => c.method === 'setR…
+    123|     expect(setRateCalls.length).toBeGreaterThan(0);
+       |                                 ^
+    124|     // 应有 1.05（加速）的调用
+    125|     const hasChaseRate = setRateCalls.some(c => (c.args[0] as number) …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  test/SyncEngine.test.ts > SyncEngine > 场景 4：大漂移 >2s → 直接 seek
+AssertionError: expected 0 to be greater than 0
+ ❯ test/SyncEngine.test.ts:153:30
+    151|     // A 应 seek 到约 103s
+    152|     const seekCalls = adapterA.calls.filter(c => c.method === 'seek');
+    153|     expect(seekCalls.length).toBeGreaterThan(0);
+       |                              ^
+    154|     expect(seekCalls[seekCalls.length - 1].args[0]).toBeGreaterThan(10…
+    155|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 5 passed (8)
+   Start at  17:23:27
+   Duration  981ms (transform 147ms, setup 0ms, import 205ms, tests 11ms, environment 0ms)

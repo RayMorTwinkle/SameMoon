@@ -1,0 +1,7 @@
+GET / 200 + SPA shell
+GET /room/1234 200 + SPA shell
+GET /room/1234/play 200 + SPA shell
+GET /health ok
+session:hello -> connected
+ping -> pong
+room:create -> room:created

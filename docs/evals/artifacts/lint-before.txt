@@ -1,0 +1,174 @@
+
+> client@0.0.0 lint
+> eslint .
+
+
+/private/tmp/samemoon-1126-base.y8CMKs/client/src/components/Player/PlayerPage.tsx
+  125:6  warning  React Hook useEffect has missing dependencies: 'isScreenShare' and 'navState?.mode'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+
+/private/tmp/samemoon-1126-base.y8CMKs/client/src/components/Room/FileTransferPanel.tsx
+  190:10  error  Error: Cannot create components during render
+
+Components created during render will reset their state each time they are created. Declare components outside of render.
+
+/private/tmp/samemoon-1126-base.y8CMKs/client/src/components/Room/FileTransferPanel.tsx:190:10
+  188 |           <span>{role === 'host' ? '正在发送…' : '正在接收…'}</span>
+  189 |         </div>
+> 190 |         <ProgressBar />
+      |          ^^^^^^^^^^^ This component is created during render
+  191 |         <p className="text-[10px] opacity-40">
+  192 |           {(role === 'host' ? transferMode : incoming?.transferMode) === 'stream'
+  193 |             ? '流式传输：缓存一点即可边下边看，正在进入播放页…'
+
+/private/tmp/samemoon-1126-base.y8CMKs/client/src/components/Room/FileTransferPanel.tsx:161:23
+  159 |
+  160 |   // ─── 渲染 ────────────────────────────────────────────
+> 161 |   const ProgressBar = () => (
+      |                       ^^^^^^^
+> 162 |     <div className="space-y-1">
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 163 |       <div className="sm-progress-track">
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 164 |         <div className="sm-progress-fill" style={{ width: `${pct}%` }} />
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 165 |       </div>
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 166 |       <p className="text-xs opacity-60">
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 167 |         {formatFileSize(progress.done)} / {formatFileSize(progress.total)} ({pct}%)
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 168 |       </p>
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 169 |     </div>
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 170 |   );
+      | ^^^^ The component is created during render here
+  171 |
+  172 |   if (!peerJoined) {
+  173 |     return (  react-hooks/static-components
+
+/private/tmp/samemoon-1126-base.y8CMKs/client/src/components/Room/RoomPage.tsx
+  168:28  error  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           @typescript-eslint/no-explicit-any
+  175:11  error  Error: Cannot access variable before it is declared
+
+`handleIncomingShare` is accessed before it is declared, which prevents the earlier access from updating when this value changes over time.
+
+/private/tmp/samemoon-1126-base.y8CMKs/client/src/components/Room/RoomPage.tsx:175:11
+  173 |         if (sigType === 'offer' && roomMode === 'screen-share' && !screenShareStore.isSharer()) {
+  174 |           console.log('[SS-B] 收到 offer, 启动 handleIncomingShare');
+> 175 |           handleIncomingShare(signalData);
+      |           ^^^^^^^^^^^^^^^^^^^ `handleIncomingShare` accessed before it is declared
+  176 |         } else {
+  177 |           debugStore.logError('rtc', 'signal-dropped', `无 peer 可路由: ${sigType}`);
+  178 |         }
+
+/private/tmp/samemoon-1126-base.y8CMKs/client/src/components/Room/RoomPage.tsx:305:3
+  303 |   };
+  304 |
+> 305 |   const handleIncomingShare = async (signalData: unknown) => {
+      |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 306 |     console.log('[SS-B] handleIncomingShare 开始');
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 307 |     const svc = new ScreenShareService();
+      …
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 321 |     }
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 322 |   };
+      | ^^^^^ `handleIncomingShare` is declared here
+  323 |
+  324 |   const handleFileSelect = (file: File) => {
+  325 |     if (!isValidVideoFile(file)) {  react-hooks/immutability
+  209:7   error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/private/tmp/samemoon-1126-base.y8CMKs/client/src/components/Room/RoomPage.tsx:209:7
+  207 |     if (restoredData && restoredData.roomCode === code) {
+  208 |       restoredActiveRef.current = true;
+> 209 |       setRole(restoredData.role);
+      |       ^^^^^^^ Avoid calling setState() directly within an effect
+  210 |       setPeerStatus(restoredData.peerOnline ? 'joined' : 'waiting');
+  211 |       const mode = (restoredData as { mode?: RoomMode }).mode ?? 'local-sync';
+  212 |       setRoomMode(mode);                                                                                                                                                                                                                                                                  react-hooks/set-state-in-effect
+
+/private/tmp/samemoon-1126-base.y8CMKs/client/src/components/common/notify.tsx
+  30:14  error  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+
+/private/tmp/samemoon-1126-base.y8CMKs/client/src/hooks/useWebSocket.tsx
+  146:35  error  Error: Cannot access variable before it is declared
+
+`connect` is accessed before it is declared, which prevents the earlier access from updating when this value changes over time.
+
+/private/tmp/samemoon-1126-base.y8CMKs/client/src/hooks/useWebSocket.tsx:146:35
+  144 |       setReconnectCount(retriesRef.current);
+  145 |       setTimeout(() => {
+> 146 |         if (!disposedRef.current) connect();
+      |                                   ^^^^^^^ `connect` accessed before it is declared
+  147 |       }, delay);
+  148 |     };
+  149 |
+
+/private/tmp/samemoon-1126-base.y8CMKs/client/src/hooks/useWebSocket.tsx:70:3
+   68 |   }, []);
+   69 |
+>  70 |   const connect = useCallback(() => {
+      |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+>  71 |     if (disposedRef.current) return;
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+>  72 |
+      …
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 150 |     ws.onerror = () => { ws.close(); };
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 151 |   }, []);
+      | ^^^^^^^^^^ `connect` is declared here
+  152 |
+  153 |   useEffect(() => {
+  154 |     disposedRef.current = false;  react-hooks/immutability
+  196:17  error  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     react-refresh/only-export-components
+  203:17  error  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     react-refresh/only-export-components
+  206:3   error  Error: Cannot access refs during render
+
+React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected (https://react.dev/reference/react/useRef).
+
+/private/tmp/samemoon-1126-base.y8CMKs/client/src/hooks/useWebSocket.tsx:206:3
+  204 |   const { subscribe } = useWebSocket();
+  205 |   const handlerRef = useRef(handler);
+> 206 |   handlerRef.current = handler;
+      |   ^^^^^^^^^^^^^^^^^^ Cannot update ref during render
+  207 |
+  208 |   useEffect(() => {
+  209 |     return subscribe((msg) => handlerRef.current(msg));                                                                                                                                                                                                                                                                                                                                                                                                                         react-hooks/refs
+
+/private/tmp/samemoon-1126-base.y8CMKs/client/src/services/playback/MseStreamController.ts
+  88:7  error  Expected an assignment or function call and instead saw an expression  @typescript-eslint/no-unused-expressions
+
+/private/tmp/samemoon-1126-base.y8CMKs/client/src/services/webrtc/PCStatsCollector.ts
+   60:26  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+   66:30  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  149:32  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+/private/tmp/samemoon-1126-base.y8CMKs/client/src/services/webrtc/ScreenShare.ts
+   57:37  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  107:56  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  107:91  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  123:19  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  160:56  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  160:91  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  171:19  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  313:30  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  332:30  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+/private/tmp/samemoon-1126-base.y8CMKs/client/src/services/webrtc/screenShareStore.ts
+  64:31  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  84:20  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+/private/tmp/samemoon-1126-base.y8CMKs/client/test/fakes.ts
+  104:14  error  '_source' is defined but never used  @typescript-eslint/no-unused-vars
+
+✖ 26 problems (25 errors, 1 warning)

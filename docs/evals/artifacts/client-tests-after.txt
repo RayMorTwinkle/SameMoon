@@ -1,0 +1,12 @@
+
+> client@0.0.0 test
+> vitest run
+
+
+ RUN  v4.1.10 /private/tmp/samemoon-validation.9IbrvL/client
+
+
+ Test Files  2 passed (2)
+      Tests  13 passed (13)
+   Start at  17:29:24
+   Duration  204ms (transform 119ms, setup 0ms, import 149ms, tests 13ms, environment 0ms)

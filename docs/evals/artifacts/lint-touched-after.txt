@@ -1,0 +1,1 @@
+ESLint exit 0 for src/services/sync, test, src/components/Room/HomePage.tsx

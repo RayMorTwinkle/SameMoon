@@ -1,0 +1,25 @@
+
+> samemoon-server@0.1.0 test
+> npm run build && NODE_ENV=test node --test test/*.test.mjs
+
+
+> samemoon-server@0.1.0 build
+> tsc
+
+✔ malformed room messages return an error and server stays healthy (119.100375ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 342.643875
+
+ RUN  v4.1.12 /private/tmp/samemoon-1126-base.y8CMKs/server
+
+
+ Test Files  3 passed (3)
+      Tests  34 passed (34)
+   Start at  17:23:17
+   Duration  941ms (transform 239ms, setup 0ms, import 409ms, tests 764ms, environment 1ms)
