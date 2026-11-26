@@ -31,3 +31,25 @@ Each case records one row per 100 ms, including time zero and 60 s. Columns are 
 - **Invalid exchange** feeds three samples where peer processing exceeds the entire local elapsed time. The JSON records readiness and resulting estimated offset.
 
 The timer and media model do not decode frames, incur seek/buffer stalls, run browser autoplay rules, exercise RTC, or measure Internet latency. The repeated 1× and hard-seek control fixtures let a reader check whether a claimed improvement extends to already-working behavior. Sampling every 100 ms can miss short excursions between samples. The 60-second ceiling is a censoring boundary, so an unsettled baseline cannot be assigned a precise speedup.
+
+## Post-freeze sensitivity check
+
+The alternate inputs were committed at `40c53ea`, after the controller was frozen at `c8308cd` and before either revision was run against them. No controller changes followed from this check. Run the same two commands with a third argument to reproduce its traces.
+
+```sh
+node docs/evals/artifacts/simulate.cjs 49f0fc7 sensitivity > /tmp/samemoon-sensitivity-before.json
+node docs/evals/artifacts/simulate.cjs c8308cd sensitivity > /tmp/samemoon-sensitivity-after.json
+cmp /tmp/samemoon-sensitivity-before.json docs/evals/artifacts/sensitivity-before.json
+cmp /tmp/samemoon-sensitivity-after.json docs/evals/artifacts/sensitivity-after.json
+```
+
+The fixed burst schedule sends leader-to-follower messages in 170–510 ms and replies in 9–42 ms. The follower clock starts 920 ms behind the leader, with −65 ppm wall-clock drift and −115 ppm media drift. All other sampling and acceptance rules match the original six fixtures. These cases are designer-selected after seeing the original experiment; they are a sensitivity check without a blind holdout.
+
+| Fixture and initial error | Settling, baseline → candidate | Hard seeks | Signed final error, baseline → candidate |
+| --- | --- | --- | --- |
+| 0.5×, +1200 ms | Unsettled → 36.2 s | 11 → 0 | +2425.515 → +195.840 ms |
+| 2×, −1450 ms | Unsettled → 51.9 s | 11 → 0 | −5074.485 → −149.489 ms |
+| 1.25×, −1750 ms, 43.1 s send blackout | Both unsettled | 2 → 0 | −1326.638 → −207.991 ms |
+| 1×, −340 ms | Both unsettled | 0 → 0 | −346.900 → −346.900 ms |
+
+In the blackout the candidate only enters the band at 58.6 s, leaving 1.4 s of observations. At the band edge neither revision ever reaches ±300 ms of ground truth. The midpoint clock estimator assumes comparable one-way delays. With persistent directional asymmetry its offset can be biased enough to place a real error inside the controller's estimated deadband. Every sensitivity pair has zero overshoot, including the unsettled cases. Overshoot alone does not establish convergence.
