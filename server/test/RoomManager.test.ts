@@ -90,6 +90,8 @@ describe('RoomManager', () => {
     const wsB1 = fakeWs();
     const room = rm.createRoom('user-a', wsA);
     rm.joinRoom(room.code, 'user-b', wsB1);
+    room.users.get('user-a')!.fileInfo = { name: 'clip.mp4', size: 7 };
+    room.users.get('user-b')!.fileInfo = { name: 'clip.mp4', size: 7 };
     room.state = 'playing';
 
     // 标记 B 离线

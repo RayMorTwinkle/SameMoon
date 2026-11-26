@@ -72,14 +72,15 @@ export class RoomManager {
     // 幂等：已在房间内的用户重复 join，直接返回房间（不改变角色/人数）
     if (room.users.has(userId)) {
       // 更新 ws 引用（可能是新连接）
-      room.users.get(userId)!.ws = ws;
+      if (!room.users.get(userId)!.ws) this.reconnectUser(code, userId, ws);
+      else room.users.get(userId)!.ws = ws;
       return room;
     }
     if (room.users.size >= 2) return null;
 
     room.users.set(userId, { id: userId, ws, role: 'guest' });
     if (room.users.size === 2) {
-      room.state = 'selecting';
+      room.state = [...room.users.values()].every(user => user.ws) ? 'selecting' : 'reconnecting';
     }
     return room;
   }
@@ -102,12 +103,18 @@ export class RoomManager {
     const user = room.users.get(userId);
     if (!user) return false;
     user.ws = ws;
-    // 恢复房间状态
-    if (room.users.size === 2) {
-      const allOnline = [...room.users.values()].every(u => u.ws !== null);
-      room.state = allOnline ? 'playing' : 'reconnecting';
-    } else {
+    const [first, second] = room.users.values();
+    if (!second) {
       room.state = 'waiting';
+    } else if (!first.ws || !second.ws) {
+      room.state = 'reconnecting';
+    } else if (room.mode === 'local-sync') {
+      const left = first.fileInfo;
+      const right = second.fileInfo;
+      room.state = left && right && left.name === right.name && left.size === right.size
+        ? 'playing' : 'selecting';
+    } else {
+      room.state = 'playing';
     }
     // 清除断线倒计时
     this.clearDisconnectTimer(userId);
@@ -118,7 +125,7 @@ export class RoomManager {
   forceRemove(code: string, userId: string): void {
     const room = this.rooms.get(code);
     if (!room) return;
-    room.users.delete(userId);
+    if (!room.users.delete(userId)) return;
     this.clearDisconnectTimer(userId);
     // 如果被移除的是当前屏幕分享者，清除标记
     if (room.screenSharer === userId) {
@@ -126,6 +133,9 @@ export class RoomManager {
     }
     if (room.users.size === 0) {
       this.destroyRoom(code);
+    } else {
+      const [remaining] = room.users.values();
+      room.state = remaining.ws ? 'waiting' : 'reconnecting';
     }
   }
 
@@ -174,16 +184,7 @@ export class RoomManager {
   }
 
   leaveRoom(code: string, userId: string): void {
-    const room = this.rooms.get(code);
-    if (!room) return;
-
-    room.users.delete(userId);
-    if (room.screenSharer === userId) {
-      room.screenSharer = null;
-    }
-    if (room.users.size === 0) {
-      this.destroyRoom(code);
-    }
+    this.forceRemove(code, userId);
   }
 
   destroyRoom(code: string): void {
