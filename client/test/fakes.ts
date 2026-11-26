@@ -96,8 +96,8 @@ export class FakeAdapter implements PlaybackAdapter {
     this.calls.push({ method, args });
   }
 
-  async load(_source: PlaybackSource): Promise<void> {
-    this.record('load');
+  async load(source: PlaybackSource): Promise<void> {
+    this.record('load', source);
   }
 
   async play(): Promise<void> {
