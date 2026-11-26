@@ -1,0 +1,32 @@
+tar: Failed to set default locale
+tar: Failed to set default locale
+controller revision c8308cd9865779b536e6901b45102c3756e8d8cc
+test fixture revision c8308cd9865779b536e6901b45102c3756e8d8cc
+v24.15.0
+
+> client@0.0.0 test
+> vitest run --reporter=verbose
+
+
+ RUN  v4.1.10 /private/var/folders/m8/tgs61s_x64bf2rs9w1_q8w8w0000gn/T/samemoon-tests.58ZmJMFc/client
+
+ ✓ test/DriftControl.test.ts > playback controller > keeps the selected rate on the wire, restores it when heartbeats stop 4ms
+ ✓ test/DriftControl.test.ts > playback controller > keeps a user rate change made during a correction 0ms
+ ✓ test/DriftControl.test.ts > playback controller > starts and stops idempotently and cancels all periodic work 0ms
+ ✓ test/DriftControl.test.ts > playback controller > ignores an older snapshot and an incomplete state without mutating the player 0ms
+ ✓ test/DriftControl.test.ts > four-timestamp sample window > rejects impossible intervals and nonfinite input; reset clears the estimate 0ms
+ ✓ test/SyncEngine.test.ts > SyncEngine > 场景 1：A play → B 状态收敛（paused=false, 时间同步） 2ms
+ ✓ test/SyncEngine.test.ts > SyncEngine > 场景 2：双方同时操作（seq 冲突）→ 收敛到同一胜者 3ms
+ ✓ test/SyncEngine.test.ts > SyncEngine > 场景 3：小漂移 0.5s → 变速追赶，不 seek 1ms
+ ✓ test/SyncEngine.test.ts > SyncEngine > 场景 4：大漂移 >2s → follower 跳转至 leader 的进度 0ms
+ ✓ test/SyncEngine.test.ts > SyncEngine > 场景 5：回声抑制 — applyRemote 触发的事件不广播 0ms
+ ✓ test/SyncEngine.test.ts > SyncEngine > 场景 6：缓冲协商 — 30s 超时触发回调 0ms
+ ✓ test/SyncEngine.test.ts > SyncEngine > 场景 7：sync:state 请求/响应 — 空 data 触发 sendState 回复 1ms
+ ✓ test/SyncEngine.test.ts > SyncEngine > 回归：sendState 不应递增 seq（Bug 1 修复） 0ms
+
+ Test Files  2 passed (2)
+      Tests  13 passed (13)
+   Start at  17:25:28
+   Duration  2.50s (transform 933ms, setup 0ms, import 1.68s, tests 16ms, environment 0ms)
+
+exit_status=0

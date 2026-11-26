@@ -1,0 +1,134 @@
+tar: Failed to set default locale
+tar: Failed to set default locale
+controller revision 49f0fc7234558e71d67e5381c18b88c58e10ab93
+test fixture revision c8308cd9865779b536e6901b45102c3756e8d8cc
+v24.15.0
+
+> client@0.0.0 test
+> vitest run --reporter=verbose
+
+
+ RUN  v4.1.10 /private/var/folders/m8/tgs61s_x64bf2rs9w1_q8w8w0000gn/T/samemoon-tests.QuQxIZ0p/client
+
+ × test/DriftControl.test.ts > playback controller > keeps the selected rate on the wire, restores it when heartbeats stop 14ms
+   → expected 1.05 to be close to 1.575, received difference is 0.5249999999999999, but expected 0.005
+ × test/DriftControl.test.ts > playback controller > keeps a user rate change made during a correction 8ms
+   → expected [] to deeply equal [ ObjectContaining{…} ]
+ × test/DriftControl.test.ts > playback controller > starts and stops idempotently and cancels all periodic work 1ms
+   → expected [ …(6) ] to have a length of 3 but got 6
+ × test/DriftControl.test.ts > playback controller > ignores an older snapshot and an incomplete state without mutating the player 1ms
+   → expected 2 to be 10 // Object.is equality
+ × test/DriftControl.test.ts > four-timestamp sample window > rejects impossible intervals and nonfinite input; reset clears the estimate 0ms
+   → expected true to be false // Object.is equality
+ ✓ test/SyncEngine.test.ts > SyncEngine > 场景 1：A play → B 状态收敛（paused=false, 时间同步） 2ms
+ ✓ test/SyncEngine.test.ts > SyncEngine > 场景 2：双方同时操作（seq 冲突）→ 收敛到同一胜者 1ms
+ ✓ test/SyncEngine.test.ts > SyncEngine > 场景 3：小漂移 0.5s → 变速追赶，不 seek 5ms
+ ✓ test/SyncEngine.test.ts > SyncEngine > 场景 4：大漂移 >2s → follower 跳转至 leader 的进度 1ms
+ ✓ test/SyncEngine.test.ts > SyncEngine > 场景 5：回声抑制 — applyRemote 触发的事件不广播 0ms
+ ✓ test/SyncEngine.test.ts > SyncEngine > 场景 6：缓冲协商 — 30s 超时触发回调 2ms
+ ✓ test/SyncEngine.test.ts > SyncEngine > 场景 7：sync:state 请求/响应 — 空 data 触发 sendState 回复 0ms
+ ✓ test/SyncEngine.test.ts > SyncEngine > 回归：sendState 不应递增 seq（Bug 1 修复） 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/DriftControl.test.ts > playback controller > keeps the selected rate on the wire, restores it when heartbeats stop
+AssertionError: expected 1.05 to be close to 1.575, received difference is 0.5249999999999999, but expected 0.005
+ ❯ test/DriftControl.test.ts:22:26
+     20|     const { engine, adapter, messages, clock } = session();
+     21|     engine.applyDriftCorrection(0.45, false, clock.now());
+     22|     expect(adapter.rate).toBeCloseTo(1.575);
+       |                          ^
+     23|     engine.sendHeartbeat();
+     24|     engine.sendState();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  test/DriftControl.test.ts > playback controller > keeps a user rate change made during a correction
+AssertionError: expected [] to deeply equal [ ObjectContaining{…} ]
+
+- Expected
++ Received
+
+- [
+-   ObjectContaining {
+-     "data": ObjectContaining {
+-       "rate": 2,
+-     },
+-   },
+- ]
++ []
+
+ ❯ test/DriftControl.test.ts:39:58
+     37|     clock.advance(12_000);
+     38|     expect(adapter.rate).toBe(2);
+     39|     expect(messages.filter(m => m.type === 'sync:rate')).toEqual([
+       |                                                          ^
+     40|       expect.objectContaining({ data: expect.objectContaining({ rate: …
+     41|     ]);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  test/DriftControl.test.ts > playback controller > starts and stops idempotently and cancels all periodic work
+AssertionError: expected [ …(6) ] to have a length of 3 but got 6
+
+- Expected
++ Received
+
+- 3
++ 6
+
+ ❯ test/DriftControl.test.ts:49:22
+     47|     engine.start();
+     48|     clock.advance(15_000);
+     49|     expect(messages).toHaveLength(3);
+       |                      ^
+     50|     engine.applyDriftCorrection(1, false, clock.now());
+     51|     engine.stop();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+ FAIL  test/DriftControl.test.ts > playback controller > ignores an older snapshot and an incomplete state without mutating the player
+AssertionError: expected 2 to be 10 // Object.is equality
+
+- Expected
++ Received
+
+- 10
++ 2
+
+ ❯ test/DriftControl.test.ts:64:31
+     62|     engine.handleRemoteMessage({ type: 'sync:state', data: { ...data, …
+     63|     engine.handleRemoteMessage({ type: 'sync:seek', data: { seq: 3, ti…
+     64|     expect(adapter.getTime()).toBe(10);
+       |                               ^
+     65|     engine.stop();
+     66|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯
+
+ FAIL  test/DriftControl.test.ts > four-timestamp sample window > rejects impossible intervals and nonfinite input; reset clears the estimate
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ test/DriftControl.test.ts:77:26
+     75|       sync.addSample(130, 520, 500, 120);
+     76|     }
+     77|     expect(sync.isReady).toBe(false);
+       |                          ^
+     78|     for (let n = 0; n < 3; n++) sync.addSample(100, 510, 510, 120);
+     79|     expect(sync.isReady).toBe(true);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/5]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  5 failed | 8 passed (13)
+   Start at  17:25:19
+   Duration  2.39s (transform 863ms, setup 0ms, import 1.66s, tests 45ms, environment 0ms)
+
+exit_status=1
